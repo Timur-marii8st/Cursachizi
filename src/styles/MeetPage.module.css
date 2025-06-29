@@ -1,0 +1,46 @@
+/* src/styles/MeetPage.module.css */
+.meetPageContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start; /* Контент начинается сверху */
+  min-height: 100vh;
+  padding-top: 20px; /* Отступ сверху */
+  padding-bottom: 85px; /* Отступ снизу из-за BottomNav (65px + 20px запаса) */
+  box-sizing: border-box; /* Чтобы padding не увеличивал общую высоту */
+  position: relative; /* Для AnimatedBackground */
+}
+
+.pageHeader {
+  z-index: 1; /* Выше фона */
+  color: #444; /* Темно-серый для контраста с пастельным фоном */
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.pageHeader h2 {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.profilesArea {
+  z-index: 1; /* Выше фона */
+  display: flex;
+  flex-direction: column; /* или row если несколько карточек рядом */
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.loadingText {
+  font-size: 18px;
+  color: #777;
+  margin-top: 50px;
+}
+
+.profilesArea.grid {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+}

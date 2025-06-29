@@ -1,0 +1,111 @@
+body, html, #root {
+  background-image: url('./assets/backhround_image.png');
+  background-size: cover;      /* Растянуть */
+  background-position: center; /* Центрировать */
+  background-repeat: no-repeat;/* Не повторять */
+  margin: 0;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  overflow: hidden; /* Предотвращаем прокрутку на главной странице */
+  color: #333;
+}
+
+.app-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column; /* Для позиционирования меню-кнопки */
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.title-cursive {
+  font-family: "Great Vibes";
+  font-size: 12rem;       /* при необходимости можно увеличить размер */
+  line-height: 1.0;   
+}
+
+.main-content {
+  z-index: 2; /* Чтобы контент был поверх фона */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0; /* Пространство между кнопками */
+  color:#4d4d4d;
+  font-size: 33px;
+}
+
+.button-row {
+  display: flex;
+  flex-direction: row; /* кнопки в ряд */
+  gap: 27px;
+}
+
+.auth-button {
+  padding: 12px 30px;
+  font-size: 25px;
+  font-weight: 600;
+  border: none;
+  border-radius: 25px;
+  cursor: pointer;
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+  min-width: 150px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+.auth-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.signup-button {
+  background-color: #90aae7; /* Теплый оранжевый */
+  color: white;
+}
+
+.login-button {
+  background-color: #fff; /* Белый */
+  color: #90aae7; /* Теплый оранжевый */
+  border: 1px solid #90aae7;
+}
+
+
+.menu-button {
+  position: fixed; /* Фиксированное позиционирование */
+  top: 20px;
+  left: 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  z-index: 1001; /* Выше чем сайдбар при его закрытии */
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.menu-button span {
+  display: block;
+  width: 25px;
+  height: 3px;
+  background-color: #4c4c4c; /* Темно-серый для контраста */
+  border-radius: 3px;
+  transition: all 0.3s ease-in-out;
+}
+
+/* Анимация для кнопки меню (опционально) */
+.menu-button.open span:nth-child(1) {
+  transform: rotate(45deg) translate(5px, 5px);
+}
+.menu-button.open span:nth-child(2) {
+  opacity: 0;
+}
+.menu-button.open span:nth-child(3) {
+  transform: rotate(-45deg) translate(5px, -5px);
+}
