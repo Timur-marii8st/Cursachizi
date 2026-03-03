@@ -1,0 +1,8 @@
+[project]
+name = "courseforge-shared"
+version = "0.1.0"
+description = "Shared schemas and utilities for CourseForge"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.10.0",
+]
