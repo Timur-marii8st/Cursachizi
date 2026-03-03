@@ -17,6 +17,7 @@ dependencies = [
     "anthropic>=0.39.0",
     "openai>=1.56.0",
     "python-docx>=1.1.2",
+    "pdf2image>=1.17.0",
     "trafilatura>=1.12.0",
     "playwright>=1.49.0",
     "boto3>=1.35.0",

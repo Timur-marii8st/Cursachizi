@@ -85,6 +85,16 @@ class FactCheckResult(BaseModel):
     corrections_applied: int = 0
 
 
+class VisualMatchResult(BaseModel):
+    """Result of a single visual template matching iteration."""
+
+    iteration: int
+    score: float = Field(default=0.0, ge=0.0, le=10.0)
+    issues: list[str] = Field(default_factory=list)
+    fixes_applied: list[str] = Field(default_factory=list)
+    converged: bool = False
+
+
 class PipelineConfig(BaseModel):
     """Configuration for a single pipeline run."""
 
@@ -93,7 +103,15 @@ class PipelineConfig(BaseModel):
     max_tokens_per_section: int = Field(default=4000, ge=1000, le=8000)
     enable_fact_check: bool = True
     max_claims_per_chapter: int = Field(default=5, ge=1, le=20)
-    writer_model: str = "claude-sonnet-4-5-20241022"
-    light_model: str = "claude-haiku-4-5-20241022"
+    writer_model: str = "google/gemini-2.5-flash"
+    light_model: str = "google/gemini-2.5-flash"
+    vision_model: str = "google/gemini-2.5-flash"
     search_provider: str = "tavily"
     timeout_seconds: int = Field(default=900, ge=120, le=3600)
+
+    # Visual template matching
+    enable_visual_match: bool = True
+    visual_match_max_iterations: int = Field(default=3, ge=1, le=10)
+
+    # Iterative fact-checking
+    fact_check_max_rounds: int = Field(default=2, ge=1, le=5)

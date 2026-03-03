@@ -2,9 +2,11 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (LibreOffice + Poppler for headless doc rendering)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libreoffice-writer \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files first for better caching

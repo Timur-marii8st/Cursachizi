@@ -27,9 +27,11 @@ class Settings(BaseSettings):
     # LLM Providers
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    default_llm_provider: str = "anthropic"
-    default_writer_model: str = "claude-sonnet-4-5-20241022"
-    default_light_model: str = "claude-haiku-4-5-20241022"
+    openrouter_api_key: str = ""
+    default_llm_provider: str = "openrouter"
+    default_writer_model: str = "google/gemini-2.5-flash"
+    default_light_model: str = "google/gemini-2.5-flash"
+    vision_model: str = "google/gemini-2.5-flash"
 
     # Search Providers
     tavily_api_key: str = ""
@@ -59,6 +61,13 @@ class Settings(BaseSettings):
     max_sources_per_topic: int = 15
     max_tokens_per_section: int = 4000
     pipeline_timeout_seconds: int = 900
+
+    # Visual template matching
+    visual_match_max_iterations: int = 3
+    visual_match_enabled: bool = True
+
+    # Iterative fact-checking
+    fact_check_max_rounds: int = 2
 
     @property
     def is_production(self) -> bool:

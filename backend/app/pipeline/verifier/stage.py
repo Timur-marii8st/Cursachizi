@@ -70,6 +70,7 @@ class VerifierStage:
             checked = await self._fact_checker.check_claim(
                 claim=claim,
                 model=config.light_model,
+                max_rounds=config.fact_check_max_rounds,
             )
             result.claims.append(checked)
             result.checked_claims += 1

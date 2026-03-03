@@ -31,27 +31,53 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
     """Get the configured LLM provider."""
     settings = settings or get_settings()
 
-    if settings.default_llm_provider == "anthropic" and settings.anthropic_api_key:
+    provider = settings.default_llm_provider
+
+    if provider == "openrouter" and settings.openrouter_api_key:
+        return create_llm_provider(
+            "openrouter",
+            api_key=settings.openrouter_api_key,
+            default_model=settings.default_writer_model,
+        )
+    elif provider == "anthropic" and settings.anthropic_api_key:
         return create_llm_provider(
             "anthropic",
             api_key=settings.anthropic_api_key,
             default_model=settings.default_writer_model,
         )
-    elif settings.default_llm_provider == "openai" and settings.openai_api_key:
+    elif provider == "openai" and settings.openai_api_key:
         return create_llm_provider(
             "openai",
             api_key=settings.openai_api_key,
             default_model=settings.default_writer_model,
         )
     else:
-        # Try anthropic first, then openai
-        if settings.anthropic_api_key:
+        # Fallback chain: openrouter → anthropic → openai
+        if settings.openrouter_api_key:
+            return create_llm_provider(
+                "openrouter", api_key=settings.openrouter_api_key
+            )
+        elif settings.anthropic_api_key:
             return create_llm_provider("anthropic", api_key=settings.anthropic_api_key)
         elif settings.openai_api_key:
             return create_llm_provider("openai", api_key=settings.openai_api_key)
         raise ValueError(
-            "No LLM provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY."
+            "No LLM provider configured. Set OPENROUTER_API_KEY, "
+            "ANTHROPIC_API_KEY, or OPENAI_API_KEY."
         )
+
+
+def get_vision_llm_provider(settings: Settings | None = None):
+    """Get an OpenRouter provider for vision tasks (visual template matching)."""
+    from backend.app.llm.openrouter import OpenRouterProvider
+
+    settings = settings or get_settings()
+    if not settings.openrouter_api_key:
+        return None
+    return OpenRouterProvider(
+        api_key=settings.openrouter_api_key,
+        default_model=settings.vision_model,
+    )
 
 
 def get_search_provider(settings: Settings | None = None) -> SearchProvider:

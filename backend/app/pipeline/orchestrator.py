@@ -5,8 +5,11 @@ from datetime import datetime
 
 import structlog
 
+from backend.app.llm.openrouter import OpenRouterProvider
 from backend.app.llm.provider import LLMProvider
+from backend.app.pipeline.formatter.document_renderer import DocumentRenderer
 from backend.app.pipeline.formatter.stage import FormatterStage
+from backend.app.pipeline.formatter.visual_matcher import VisualTemplateMatcher
 from backend.app.pipeline.research.searcher import SearchProvider
 from backend.app.pipeline.research.stage import ResearchStage
 from backend.app.pipeline.verifier.stage import VerifierStage
@@ -17,6 +20,7 @@ from shared.schemas.pipeline import (
     PipelineConfig,
     ResearchResult,
     SectionContent,
+    VisualMatchResult,
 )
 from shared.schemas.template import GostTemplate
 
@@ -32,6 +36,7 @@ class PipelineResult:
     sections: list[SectionContent] = field(default_factory=list)
     fact_check: FactCheckResult | None = None
     document_bytes: bytes | None = None
+    visual_match_results: list[VisualMatchResult] = field(default_factory=list)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     started_at: datetime | None = None
@@ -63,6 +68,7 @@ class PipelineOrchestrator:
     3. Write — section-by-section content generation
     4. Verify — fact-check claims
     5. Format — generate ГОСТ-compliant .docx
+    6. Visual Match — iterative format comparison with reference (optional)
     """
 
     def __init__(
@@ -70,11 +76,15 @@ class PipelineOrchestrator:
         llm: LLMProvider,
         search: SearchProvider,
         template: GostTemplate | None = None,
+        vision_llm: OpenRouterProvider | None = None,
     ) -> None:
+        self._llm = llm
         self._research_stage = ResearchStage(llm, search)
         self._writer_stage = WriterStage(llm)
         self._verifier_stage = VerifierStage(llm, search)
         self._formatter_stage = FormatterStage(template)
+        self._template = template or GostTemplate()
+        self._vision_llm = vision_llm
 
     async def run(
         self,
@@ -85,6 +95,7 @@ class PipelineOrchestrator:
         additional_instructions: str = "",
         config: PipelineConfig | None = None,
         callback: StageCallback | None = None,
+        reference_docx_bytes: bytes | None = None,
     ) -> PipelineResult:
         """Execute the full pipeline.
 
@@ -192,6 +203,57 @@ class PipelineOrchestrator:
                 f"Документ готов ({len(result.document_bytes) // 1024} КБ)",
             )
 
+            # Stage 6: Visual template matching (optional)
+            if (
+                config.enable_visual_match
+                and reference_docx_bytes
+                and self._vision_llm
+            ):
+                await callback.on_stage_start(
+                    "visual_matching",
+                    "Сравниваем форматирование с образцом...",
+                )
+
+                renderer = DocumentRenderer()
+                matcher = VisualTemplateMatcher(
+                    vision_llm=self._vision_llm,
+                    renderer=renderer,
+                    vision_model=config.vision_model,
+                )
+
+                # Analyze reference formatting first
+                ref_template = await matcher.analyze_reference(reference_docx_bytes)
+                await callback.on_stage_progress(
+                    "visual_matching", 20, "Шаблон образца извлечён"
+                )
+
+                # Iteratively match
+                (
+                    result.document_bytes,
+                    _final_template,
+                    result.visual_match_results,
+                ) = await matcher.match_iteratively(
+                    reference_docx_bytes=reference_docx_bytes,
+                    outline=result.outline,
+                    sections=result.sections,
+                    sources=result.research.sources,
+                    initial_template=ref_template,
+                    max_iterations=config.visual_match_max_iterations,
+                    university=university,
+                    discipline=discipline,
+                )
+
+                iterations_done = len(result.visual_match_results)
+                final_score = (
+                    result.visual_match_results[-1].score
+                    if result.visual_match_results
+                    else 0
+                )
+                await callback.on_stage_complete(
+                    "visual_matching",
+                    f"{iterations_done} итераций, оценка {final_score:.1f}/10",
+                )
+
             result.completed_at = datetime.utcnow()
             logger.info(
                 "pipeline_complete",
@@ -199,6 +261,7 @@ class PipelineOrchestrator:
                 sections=len(result.sections),
                 words=total_words,
                 sources=len(result.research.sources),
+                visual_match=bool(result.visual_match_results),
             )
 
         except Exception as e:

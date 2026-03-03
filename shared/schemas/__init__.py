@@ -14,6 +14,7 @@ from shared.schemas.pipeline import (
     SectionContent,
     FactCheckResult,
     ClaimVerdict,
+    VisualMatchResult,
 )
 from shared.schemas.template import (
     GostTemplate,
@@ -36,6 +37,7 @@ __all__ = [
     "SectionContent",
     "FactCheckResult",
     "ClaimVerdict",
+    "VisualMatchResult",
     "GostTemplate",
     "FontConfig",
     "MarginConfig",

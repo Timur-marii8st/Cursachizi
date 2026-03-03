@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 class LLMMessage:
     role: str  # "user", "assistant", "system"
     content: str
+    images: list[bytes] = field(default_factory=list)  # PNG/JPEG bytes for vision models
 
 
 @dataclass
