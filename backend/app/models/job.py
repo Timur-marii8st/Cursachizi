@@ -25,6 +25,7 @@ class Job(Base):
     )
 
     # Job parameters
+    work_type: Mapped[str] = mapped_column(String(20), default="coursework")
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     university: Mapped[str] = mapped_column(String(200), default="")
     discipline: Mapped[str] = mapped_column(String(200), default="")
@@ -44,6 +45,9 @@ class Job(Base):
     research_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     outline_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     fact_check_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Reference template for visual matching
+    reference_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Output
     document_s3_key: Mapped[str | None] = mapped_column(String(500), nullable=True)

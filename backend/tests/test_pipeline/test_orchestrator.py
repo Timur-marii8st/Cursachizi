@@ -1,10 +1,12 @@
 """Tests for the pipeline orchestrator."""
 
 import json
+
 import pytest
 
 from backend.app.pipeline.orchestrator import PipelineOrchestrator, StageCallback
 from backend.app.testing import MockLLMProvider, MockSearchProvider
+from shared.schemas.job import WorkType
 from shared.schemas.pipeline import PipelineConfig, Source
 
 
@@ -182,3 +184,77 @@ class TestPipelineOrchestrator:
         assert result.error is None
         assert result.fact_check is None
         assert result.document_bytes is not None
+
+    async def test_pipeline_article_mode(
+        self,
+        mock_llm: MockLLMProvider,
+        search_with_results: MockSearchProvider,
+    ) -> None:
+        """Test pipeline execution in article mode."""
+        query_response = json.dumps({"queries": ["q1"]})
+        outline_response = json.dumps({
+            "title": "Анализ цифровой трансформации",
+            "abstract_points": ["Цель исследования", "Основные результаты"],
+            "keywords": ["цифровизация", "трансформация"],
+            "introduction_points": ["Актуальность"],
+            "sections": [
+                {
+                    "number": 1,
+                    "title": "Теоретические основы",
+                    "description": "Обзор литературы",
+                    "estimated_pages": 3,
+                },
+                {
+                    "number": 2,
+                    "title": "Результаты и обсуждение",
+                    "description": "Анализ данных",
+                    "estimated_pages": 3,
+                },
+            ],
+            "conclusion_points": ["Выводы"],
+        })
+        section_text = "Текст раздела научной статьи. " * 30
+
+        mock_llm.set_responses([
+            query_response,    # query expansion
+            outline_response,  # outline
+            section_text,      # abstract
+            section_text,      # introduction
+            section_text,      # section 1
+            section_text,      # section 2
+            section_text,      # conclusion
+        ])
+
+        config = PipelineConfig(
+            enable_fact_check=False,
+            max_search_results=5,
+            enable_section_rewrite=False,
+            enable_coherence_check=False,
+        )
+
+        orchestrator = PipelineOrchestrator(
+            llm=mock_llm, search=search_with_results
+        )
+
+        callback = TrackingCallback()
+        result = await orchestrator.run(
+            topic="Анализ цифровой трансформации",
+            discipline="Менеджмент",
+            page_count=10,
+            work_type=WorkType.ARTICLE,
+            config=config,
+            callback=callback,
+        )
+
+        assert result.error is None
+        assert result.outline is not None
+        assert result.outline.keywords == ["цифровизация", "трансформация"]
+        assert len(result.sections) > 0
+        assert result.document_bytes is not None
+        assert len(result.document_bytes) > 0
+
+        # Verify article-specific sections exist
+        section_titles = [s.section_title for s in result.sections]
+        assert "Аннотация" in section_titles
+        assert "Введение" in section_titles
+        assert "Заключение" in section_titles

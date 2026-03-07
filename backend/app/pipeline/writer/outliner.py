@@ -1,6 +1,7 @@
 """Outline generation for coursework structure."""
 
 import json
+
 import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider

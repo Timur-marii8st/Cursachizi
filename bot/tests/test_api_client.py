@@ -1,7 +1,7 @@
 """Tests for the CourseForge API client."""
 
-import pytest
 import httpx
+import pytest
 import respx
 
 from bot.app.services.api_client import CourseForgeAPIClient
@@ -101,3 +101,34 @@ class TestCourseForgeAPIClient:
 
         result = await api_client.health_check()
         assert result is False
+
+    @respx.mock
+    async def test_list_jobs(self, api_client: CourseForgeAPIClient) -> None:
+        respx.get("http://test-api:8000/api/jobs").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "abc123",
+                        "status": "completed",
+                        "topic": "Done job",
+                        "university": "",
+                        "discipline": "",
+                        "page_count": 25,
+                        "language": "ru",
+                        "template_id": None,
+                        "progress": None,
+                        "document_url": "https://example.com/doc.docx",
+                        "error_message": None,
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "updated_at": "2025-01-01T00:00:00Z",
+                        "completed_at": "2025-01-01T00:05:00Z",
+                    }
+                ],
+            )
+        )
+
+        jobs = await api_client.list_jobs(limit=1)
+        assert len(jobs) == 1
+        assert jobs[0].id == "abc123"
+        assert jobs[0].status == JobStatus.COMPLETED

@@ -2,11 +2,18 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from uuid import uuid4
+
+from arq.connections import ArqRedis
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.api.deps import get_db
+from backend.app.api.deps import (
+    enforce_job_rate_limit,
+    get_db,
+    verify_internal_api_key,
+)
 from backend.app.models.job import Job
 from backend.app.models.user import User
 from shared.schemas.job import (
@@ -15,9 +22,25 @@ from shared.schemas.job import (
     JobResponse,
     JobStage,
     JobStatus,
+    WorkType,
 )
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
+router = APIRouter(
+    prefix="/jobs",
+    tags=["jobs"],
+    dependencies=[Depends(verify_internal_api_key)],
+)
+
+
+def get_arq_pool(request: Request) -> ArqRedis:
+    """Get shared arq Redis pool from app state."""
+    arq_pool = getattr(request.app.state, "arq_pool", None)
+    if arq_pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Task queue is unavailable",
+        )
+    return arq_pool
 
 
 def _job_to_response(job: Job) -> JobResponse:
@@ -33,6 +56,7 @@ def _job_to_response(job: Job) -> JobResponse:
     return JobResponse(
         id=job.id,
         status=JobStatus(job.status),
+        work_type=WorkType(job.work_type),
         topic=job.topic,
         university=job.university,
         discipline=job.discipline,
@@ -52,7 +76,8 @@ def _job_to_response(job: Job) -> JobResponse:
 async def create_job(
     job_in: JobCreate,
     db: AsyncSession = Depends(get_db),
-    # TODO: Add auth dependency to get current user
+    arq_pool: ArqRedis = Depends(get_arq_pool),
+    _rate_limit: None = Depends(enforce_job_rate_limit),
 ) -> JobResponse:
     """Create a new coursework generation job."""
     # For MVP, create/get a default user
@@ -60,6 +85,7 @@ async def create_job(
 
     job = Job(
         user_id=default_user.id,
+        work_type=job_in.work_type,
         topic=job_in.topic,
         university=job_in.university,
         discipline=job_in.discipline,
@@ -74,8 +100,7 @@ async def create_job(
     await db.flush()
     await db.refresh(job)
 
-    # TODO: Enqueue the job to arq worker
-    # await arq_pool.enqueue_job("run_pipeline", job.id)
+    await arq_pool.enqueue_job("run_pipeline", job.id)
 
     return _job_to_response(job)
 
@@ -128,6 +153,61 @@ async def cancel_job(
     job.updated_at = datetime.utcnow()
     await db.flush()
     await db.refresh(job)
+    return _job_to_response(job)
+
+
+@router.post("/{job_id}/reference", response_model=JobResponse)
+async def upload_reference_template(
+    job_id: str,
+    file: UploadFile,
+    db: AsyncSession = Depends(get_db),
+) -> JobResponse:
+    """Upload a reference .docx template for visual format matching.
+
+    Must be uploaded before the job starts processing (status=pending).
+    """
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot upload reference for job in status: {job.status}",
+        )
+
+    if not file.filename or not file.filename.endswith(".docx"):
+        raise HTTPException(status_code=400, detail="File must be a .docx document")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:  # 10 MB limit
+        raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
+
+    # Upload to S3
+    from backend.app.config import get_settings
+    from backend.app.workers.tasks import _upload_document_to_s3
+
+    settings = get_settings()
+    ref_key = f"references/{job_id}/{uuid4()}.docx"
+
+    import asyncio
+
+    await asyncio.to_thread(
+        _upload_document_to_s3,
+        endpoint_url=settings.s3_endpoint_url,
+        region=settings.s3_region,
+        access_key=settings.s3_access_key,
+        secret_key=settings.s3_secret_key,
+        bucket=settings.s3_bucket_name,
+        object_key=ref_key,
+        document_bytes=content,
+    )
+
+    job.reference_s3_key = ref_key
+    job.updated_at = datetime.utcnow()
+    await db.flush()
+    await db.refresh(job)
+
     return _job_to_response(job)
 
 

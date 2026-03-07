@@ -1,8 +1,6 @@
 """Tests for the OpenRouter LLM provider."""
 
-import json
 
-import pytest
 
 from backend.app.llm.openrouter import OpenRouterProvider
 from backend.app.llm.provider import LLMMessage

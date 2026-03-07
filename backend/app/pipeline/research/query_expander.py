@@ -1,6 +1,7 @@
 """Query expansion — generates diverse search queries from a topic."""
 
 import json
+
 import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider

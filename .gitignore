@@ -48,6 +48,7 @@ docker-compose.override.yml
 # Generated documents
 *.docx
 !backend/tests/fixtures/*.docx
+!templates/*.docx
 
 # Logs
 logs/

@@ -1,3 +1,3 @@
-from backend.app.db.session import get_async_session, async_engine, AsyncSessionLocal
+from backend.app.db.session import AsyncSessionLocal, async_engine, get_async_session
 
-__all__ = ["get_async_session", "async_engine", "AsyncSessionLocal"]
+__all__ = ["AsyncSessionLocal", "async_engine", "get_async_session"]

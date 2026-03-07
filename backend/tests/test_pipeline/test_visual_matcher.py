@@ -6,7 +6,13 @@ import pytest
 
 from backend.app.llm.provider import LLMMessage, LLMResponse
 from backend.app.pipeline.formatter.visual_matcher import VisualTemplateMatcher
-from shared.schemas.pipeline import Outline, OutlineChapter, SectionContent, Source, VisualMatchResult
+from shared.schemas.pipeline import (
+    Outline,
+    OutlineChapter,
+    SectionContent,
+    Source,
+    VisualMatchResult,
+)
 from shared.schemas.template import GostTemplate
 
 

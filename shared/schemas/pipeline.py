@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
 
 class Source(BaseModel):
@@ -38,12 +38,15 @@ class OutlineChapter(BaseModel):
 
 
 class Outline(BaseModel):
-    """Complete coursework outline."""
+    """Complete coursework or article outline."""
 
     title: str
     introduction_points: list[str] = Field(default_factory=list)
     chapters: list[OutlineChapter] = Field(default_factory=list)
     conclusion_points: list[str] = Field(default_factory=list)
+    # Article-specific fields
+    keywords: list[str] = Field(default_factory=list)
+    abstract_points: list[str] = Field(default_factory=list)
 
 
 class SectionContent(BaseModel):
@@ -95,6 +98,38 @@ class VisualMatchResult(BaseModel):
     converged: bool = False
 
 
+class CoherenceIssue(BaseModel):
+    """A single coherence issue found between sections."""
+
+    issue_type: str  # terminology | contradiction | missing_reference | logic_gap
+    description: str
+    section_a: str = ""
+    section_b: str = ""
+    suggestion: str = ""
+
+
+class CoherenceResult(BaseModel):
+    """Output of the cross-section coherence check."""
+
+    issues_found: int = 0
+    issues: list[CoherenceIssue] = Field(default_factory=list)
+    fixes_applied: int = 0
+    sections_modified: list[str] = Field(default_factory=list)
+
+
+class SectionEvaluation(BaseModel):
+    """Evaluation of a single section's quality."""
+
+    section_title: str
+    passed: bool = True
+    word_count_ok: bool = True
+    citations_ok: bool = True
+    no_duplication: bool = True
+    style_ok: bool = True
+    feedback: str = ""
+    rewrite_count: int = 0
+
+
 class PipelineConfig(BaseModel):
     """Configuration for a single pipeline run."""
 
@@ -115,3 +150,10 @@ class PipelineConfig(BaseModel):
 
     # Iterative fact-checking
     fact_check_max_rounds: int = Field(default=2, ge=1, le=5)
+
+    # Quality improvement agents (Phase 2)
+    enable_coherence_check: bool = True
+    enable_section_rewrite: bool = True
+    max_section_rewrites: int = Field(default=2, ge=0, le=5)
+    min_citations_per_section: int = Field(default=2, ge=0, le=10)
+    enable_humanizer: bool = False

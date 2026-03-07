@@ -5,9 +5,8 @@ import re
 
 import structlog
 from docx import Document
-from docx.enum.section import WD_ORIENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Cm, Mm, Pt, RGBColor
+from docx.shared import Mm, Pt, RGBColor
 
 from shared.schemas.pipeline import (
     FactCheckResult,
@@ -240,13 +239,39 @@ class DocxGenerator:
         pf.space_before = Pt(style_config.space_before_pt)
         pf.space_after = Pt(style_config.space_after_pt)
 
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        """Remove markdown formatting and HTML entities from LLM output."""
+        # Remove HTML entities
+        text = text.replace("&nbsp;", " ")
+        text = re.sub(r"&[a-zA-Z]+;", " ", text)
+        # Remove markdown headings (## Title -> Title)
+        text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+        # Remove bold **text** -> text
+        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+        # Remove italic *text* -> text (but not citation [*])
+        text = re.sub(r"(?<!\[)\*(.+?)\*(?!\])", r"\1", text)
+        # Remove inline code `text` -> text
+        text = re.sub(r"`(.+?)`", r"\1", text)
+        # Remove markdown links [text](url) -> text
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        # Remove bullet points (- item, * item)
+        text = re.sub(r"^\s*[-*•]\s+", "", text, flags=re.MULTILINE)
+        # Remove numbered list prefixes (1. item, 1) item) — but not citation [1]
+        text = re.sub(r"^\s*\d+[.)]\s+", "", text, flags=re.MULTILINE)
+        # Collapse multiple spaces
+        text = re.sub(r"  +", " ", text)
+        return text
+
     def _add_body_text(self, doc: Document, text: str) -> None:
         """Add body text with proper ГОСТ formatting.
 
-        Splits text into paragraphs and applies consistent formatting.
+        Strips markdown/HTML artifacts and splits into paragraphs.
         """
         t = self._template
         body_style = t.body
+
+        text = self._clean_text(text)
 
         paragraphs = text.split("\n")
         for para_text in paragraphs:

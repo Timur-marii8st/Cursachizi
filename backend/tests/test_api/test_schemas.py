@@ -3,9 +3,9 @@
 import pytest
 from pydantic import ValidationError
 
-from shared.schemas.job import JobCreate, JobStatus, JobStage
-from shared.schemas.pipeline import PipelineConfig, Source, ClaimVerdict
-from shared.schemas.template import GostTemplate, MarginConfig, FontConfig
+from shared.schemas.job import JobCreate, JobStage, JobStatus, WorkType
+from shared.schemas.pipeline import ClaimVerdict, PipelineConfig, Source
+from shared.schemas.template import GostTemplate, MarginConfig
 
 
 class TestJobCreate:
@@ -37,17 +37,26 @@ class TestJobCreate:
 
     def test_page_count_bounds(self) -> None:
         with pytest.raises(ValidationError):
-            JobCreate(topic="Valid topic", page_count=10)  # Below minimum
+            JobCreate(topic="Valid topic", page_count=4)  # Below minimum
 
         with pytest.raises(ValidationError):
             JobCreate(topic="Valid topic", page_count=100)  # Above maximum
 
     def test_page_count_at_boundaries(self) -> None:
-        job_min = JobCreate(topic="Valid topic", page_count=15)
-        assert job_min.page_count == 15
+        job_min = JobCreate(topic="Valid topic", page_count=5)
+        assert job_min.page_count == 5
 
         job_max = JobCreate(topic="Valid topic", page_count=80)
         assert job_max.page_count == 80
+
+    def test_work_type_default(self) -> None:
+        job = JobCreate(topic="Valid topic")
+        assert job.work_type == WorkType.COURSEWORK
+
+    def test_work_type_article(self) -> None:
+        job = JobCreate(topic="Valid topic", work_type=WorkType.ARTICLE, page_count=10)
+        assert job.work_type == WorkType.ARTICLE
+        assert job.page_count == 10
 
 
 class TestJobStatus:

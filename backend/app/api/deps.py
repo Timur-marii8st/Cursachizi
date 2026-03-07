@@ -1,8 +1,9 @@
 """FastAPI dependency injection — shared dependencies for route handlers."""
 
 from collections.abc import AsyncGenerator
-from functools import lru_cache
 
+import redis.asyncio as redis
+from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import Settings, get_settings
@@ -25,6 +26,84 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+def _parse_rate_limit(value: str) -> tuple[int, int]:
+    """Parse limits like `10/hour` into `(limit, window_seconds)`."""
+    try:
+        raw_count, raw_period = value.strip().split("/", maxsplit=1)
+        count = int(raw_count)
+    except Exception as exc:
+        raise ValueError(f"Invalid rate limit format: {value}") from exc
+
+    periods = {
+        "second": 1,
+        "minute": 60,
+        "hour": 3600,
+        "day": 86400,
+    }
+    window = periods.get(raw_period.strip().lower())
+    if count < 1 or window is None:
+        raise ValueError(f"Unsupported rate limit value: {value}")
+    return count, window
+
+
+async def enforce_job_rate_limit(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+) -> None:
+    """Apply per-client rate limit to expensive job creation endpoint."""
+    settings = get_settings()
+    try:
+        max_requests, window_seconds = _parse_rate_limit(settings.rate_limit_per_user)
+    except ValueError:
+        max_requests, window_seconds = 10, 3600
+
+    client_id = (
+        (x_api_key or "").strip()
+        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    rate_key = f"rate:jobs:{client_id}"
+
+    redis_pool = getattr(request.app.state, "redis_pool", None)
+    if redis_pool is None:
+        # Fallback: create a one-off connection (dev mode without lifespan)
+        redis_pool = redis.from_url(settings.redis_url)
+
+    try:
+        current = int(await redis_pool.incr(rate_key))
+        if current == 1:
+            await redis_pool.expire(rate_key, window_seconds)
+        ttl_seconds = await redis_pool.ttl(rate_key)
+    except Exception as exc:
+        if settings.is_production:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limiter unavailable",
+            ) from exc
+        return
+
+    if current > max_requests:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Retry in {max(ttl_seconds, 0)} seconds.",
+        )
+
+
+def verify_internal_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Protect internal API endpoints when INTERNAL_API_KEY is configured."""
+    settings = get_settings()
+    expected_key = settings.internal_api_key.strip()
+
+    if not expected_key:
+        return
+
+    if x_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
 
 
 def get_llm_provider(settings: Settings | None = None) -> LLMProvider:

@@ -18,8 +18,8 @@ import json
 import structlog
 
 from backend.app.llm.openrouter import OpenRouterProvider
-from backend.app.pipeline.formatter.docx_generator import DocxGenerator
 from backend.app.pipeline.formatter.document_renderer import DocumentRenderer
+from backend.app.pipeline.formatter.docx_generator import DocxGenerator
 from shared.schemas.pipeline import (
     Outline,
     SectionContent,

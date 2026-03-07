@@ -1,10 +1,11 @@
 """Telegram bot entry point."""
 
 import asyncio
-import structlog
 
+import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
 
 from bot.app.config import get_bot_settings
 from bot.app.handlers.generate import router as generate_router
@@ -23,11 +24,21 @@ def create_bot() -> tuple[Bot, Dispatcher]:
         raise ValueError("TELEGRAM_BOT_TOKEN is not set")
 
     bot = Bot(token=settings.telegram_bot_token)
-    storage = MemoryStorage()  # TODO: Use Redis storage for production
+
+    try:
+        storage = RedisStorage.from_url(settings.redis_url)
+        logger.info("bot_storage", type="redis")
+    except Exception as exc:
+        logger.warning("bot_redis_storage_failed, falling back to memory", error=str(exc))
+        storage = MemoryStorage()
+
     dp = Dispatcher(storage=storage)
 
     # Create API client and inject as middleware data
-    api_client = CourseForgeAPIClient(base_url=settings.api_base_url)
+    api_client = CourseForgeAPIClient(
+        base_url=settings.api_base_url,
+        api_key=settings.internal_api_key,
+    )
     dp["api_client"] = api_client
 
     # Register routers

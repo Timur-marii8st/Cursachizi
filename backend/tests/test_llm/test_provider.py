@@ -1,6 +1,5 @@
 """Tests for LLM provider interface and mock."""
 
-import pytest
 
 from backend.app.llm.provider import LLMMessage, LLMResponse
 from backend.app.testing import MockLLMProvider

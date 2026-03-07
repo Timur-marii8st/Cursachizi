@@ -9,7 +9,6 @@ This works on servers without a display (no X11 required).
 import asyncio
 import os
 import tempfile
-from pathlib import Path
 
 import structlog
 

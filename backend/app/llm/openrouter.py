@@ -64,6 +64,13 @@ class OpenRouterProvider(LLMProvider):
                     "temperature": temperature,
                 },
             )
+            if response.status_code >= 400:
+                logger.error(
+                    "openrouter_api_error",
+                    status=response.status_code,
+                    body=response.text[:500],
+                    model=used_model,
+                )
             response.raise_for_status()
             data = response.json()
 

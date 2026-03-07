@@ -25,6 +25,9 @@ dependencies = [
     "structlog>=24.4.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",

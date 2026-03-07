@@ -6,6 +6,11 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 
+class WorkType(StrEnum):
+    COURSEWORK = "coursework"
+    ARTICLE = "article"
+
+
 class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -27,7 +32,11 @@ class JobStage(StrEnum):
 class JobCreate(BaseModel):
     """Request to create a new coursework generation job."""
 
-    topic: str = Field(..., min_length=5, max_length=500, description="Coursework topic")
+    work_type: WorkType = Field(
+        default=WorkType.COURSEWORK,
+        description="Type of work: coursework or article",
+    )
+    topic: str = Field(..., min_length=5, max_length=500, description="Work topic")
     university: str = Field(
         default="",
         max_length=200,
@@ -40,9 +49,9 @@ class JobCreate(BaseModel):
     )
     page_count: int = Field(
         default=30,
-        ge=15,
+        ge=5,
         le=80,
-        description="Target page count",
+        description="Target page count (5-15 for articles, 15-80 for coursework)",
     )
     language: str = Field(default="ru", description="Output language (ru or en)")
     template_id: str | None = Field(
@@ -73,6 +82,7 @@ class JobResponse(BaseModel):
 
     id: str
     status: JobStatus
+    work_type: WorkType = WorkType.COURSEWORK
     topic: str
     university: str
     discipline: str

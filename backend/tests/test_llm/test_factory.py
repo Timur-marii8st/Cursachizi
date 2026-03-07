@@ -2,8 +2,8 @@
 
 import pytest
 
-from backend.app.llm.factory import create_llm_provider
 from backend.app.llm.anthropic import AnthropicProvider
+from backend.app.llm.factory import create_llm_provider
 from backend.app.llm.openai_provider import OpenAIProvider
 
 

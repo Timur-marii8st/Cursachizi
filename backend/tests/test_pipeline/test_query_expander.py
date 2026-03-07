@@ -1,6 +1,7 @@
 """Tests for query expansion."""
 
 import json
+
 import pytest
 
 from backend.app.pipeline.research.query_expander import QueryExpander

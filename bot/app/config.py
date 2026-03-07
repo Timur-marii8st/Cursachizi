@@ -14,6 +14,7 @@ class BotSettings(BaseSettings):
     telegram_webhook_url: str = ""
     api_base_url: str = "http://localhost:8000"
     redis_url: str = "redis://localhost:6379/0"
+    internal_api_key: str = ""
 
 
 def get_bot_settings() -> BotSettings:

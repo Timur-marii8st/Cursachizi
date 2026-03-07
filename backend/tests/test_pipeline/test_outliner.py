@@ -1,6 +1,7 @@
 """Tests for outline generation."""
 
 import json
+
 import pytest
 
 from backend.app.pipeline.writer.outliner import Outliner

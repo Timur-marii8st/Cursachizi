@@ -1,7 +1,7 @@
 """Tests for web scraper."""
 
-import pytest
 import httpx
+import pytest
 import respx
 
 from backend.app.pipeline.research.scraper import WebScraper

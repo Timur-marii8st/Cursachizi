@@ -1,14 +1,18 @@
 """Application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Project root: two levels up from this file (backend/app/config.py → project root)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -19,7 +23,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Database
-    database_url: str = "postgresql+asyncpg://courseforge:courseforge@localhost:5432/courseforge"
+    database_url: str = "postgresql+asyncpg://courseforge:courseforge@localhost:5433/courseforge"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -52,6 +56,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_base_url: str = "http://localhost:8000"
+    internal_api_key: str = ""
 
     # Rate Limiting
     rate_limit_per_user: str = "10/hour"
@@ -68,6 +73,19 @@ class Settings(BaseSettings):
 
     # Iterative fact-checking
     fact_check_max_rounds: int = 2
+
+    # Translation API (for humanizer)
+    google_translate_api_key: str = ""
+    deepl_api_key: str = ""
+
+    @model_validator(mode="after")
+    def _validate_production_settings(self) -> "Settings":
+        if self.app_env == "production" and not self.internal_api_key.strip():
+            raise ValueError(
+                "INTERNAL_API_KEY must be set in production. "
+                "This protects the Jobs API from unauthorized access."
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

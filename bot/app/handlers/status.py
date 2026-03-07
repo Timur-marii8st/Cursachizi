@@ -5,26 +5,26 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from bot.app.services.api_client import CourseForgeAPIClient
-from shared.schemas.job import JobStatus
+from shared.schemas.job import JobStage, JobStatus
 
 router = Router()
 
 STATUS_ICONS = {
-    JobStatus.PENDING: "⏳",
-    JobStatus.RUNNING: "🔄",
-    JobStatus.COMPLETED: "✅",
-    JobStatus.FAILED: "❌",
-    JobStatus.CANCELLED: "🚫",
+    JobStatus.PENDING: "[pending]",
+    JobStatus.RUNNING: "[running]",
+    JobStatus.COMPLETED: "[done]",
+    JobStatus.FAILED: "[failed]",
+    JobStatus.CANCELLED: "[cancelled]",
 }
 
 STAGE_NAMES = {
-    "queued": "В очереди",
-    "researching": "Исследование темы",
-    "outlining": "Составление плана",
-    "writing": "Написание текста",
-    "fact_checking": "Проверка фактов",
-    "formatting": "Форматирование",
-    "finalizing": "Завершение",
+    JobStage.QUEUED: "queued",
+    JobStage.RESEARCHING: "researching",
+    JobStage.OUTLINING: "outlining",
+    JobStage.WRITING: "writing",
+    JobStage.FACT_CHECKING: "fact-checking",
+    JobStage.FORMATTING: "formatting",
+    JobStage.FINALIZING: "finalizing",
 }
 
 
@@ -33,16 +33,35 @@ async def cmd_status(
     message: Message,
     api_client: CourseForgeAPIClient,
 ) -> None:
-    """Check status of recent jobs."""
+    """Check status of the most recent job."""
     try:
-        # For MVP, we show the most recent job
-        # TODO: Filter by telegram user ID
-        response = await api_client._base_url  # placeholder
+        jobs = await api_client.list_jobs(limit=1, offset=0)
+        if not jobs:
+            await message.answer("No jobs found yet. Start one with /generate")
+            return
+
+        job = jobs[0]
+        status_icon = STATUS_ICONS.get(job.status, "[?]")
+
+        stage_line = ""
+        if job.progress is not None:
+            stage_name = STAGE_NAMES.get(job.progress.stage, job.progress.stage)
+            stage_line = (
+                f"\nStage: {stage_name} ({job.progress.progress_pct}%)"
+            )
+            if job.progress.message:
+                stage_line += f"\nDetail: {job.progress.message}"
+
+        doc_line = f"\nDocument: {job.document_url}" if job.document_url else ""
+        err_line = f"\nError: {job.error_message}" if job.error_message else ""
+
         await message.answer(
-            "Функция проверки статуса будет доступна после подключения авторизации.\n"
-            "Пока вы можете проверить статус через API: GET /api/jobs"
+            f"{status_icon} Job {job.id}\n"
+            f"Status: {job.status}\n"
+            f"Topic: {job.topic}"
+            f"{stage_line}"
+            f"{doc_line}"
+            f"{err_line}"
         )
     except Exception:
-        await message.answer(
-            "Не удалось получить статус. Попробуйте позже."
-        )
+        await message.answer("Could not fetch status. Please try again later.")

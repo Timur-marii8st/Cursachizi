@@ -1,6 +1,7 @@
 """Tests for the fact verification pipeline."""
 
 import json
+
 import pytest
 
 from backend.app.pipeline.verifier.claim_extractor import ClaimExtractor

@@ -1,6 +1,7 @@
 """Extract verifiable factual claims from generated text."""
 
 import json
+
 import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider

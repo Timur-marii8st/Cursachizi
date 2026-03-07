@@ -1,6 +1,7 @@
 """Tests for ГОСТ-compliant document generation."""
 
 import io
+
 import pytest
 from docx import Document
 

@@ -4,9 +4,9 @@ import structlog
 
 from backend.app.llm.provider import LLMProvider
 from backend.app.pipeline.research.query_expander import QueryExpander
-from backend.app.pipeline.research.searcher import SearchProvider
-from backend.app.pipeline.research.scraper import WebScraper
 from backend.app.pipeline.research.ranker import SourceRanker
+from backend.app.pipeline.research.scraper import WebScraper
+from backend.app.pipeline.research.searcher import SearchProvider
 from shared.schemas.pipeline import PipelineConfig, ResearchResult
 
 logger = structlog.get_logger()
