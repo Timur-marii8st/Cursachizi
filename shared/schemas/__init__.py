@@ -17,6 +17,15 @@ from shared.schemas.pipeline import (
     Source,
     VisualMatchResult,
 )
+from shared.schemas.payment import (
+    CREDIT_PACKAGES,
+    PACKAGES_BY_ID,
+    BalanceResponse,
+    CreditPackage,
+    PaymentCreate,
+    PaymentResponse,
+    PaymentStatus,
+)
 from shared.schemas.template import (
     FontConfig,
     GostTemplate,
@@ -43,5 +52,12 @@ __all__ = [
     "SectionContent",
     "Source",
     "VisualMatchResult",
+    "BalanceResponse",
+    "CreditPackage",
+    "CREDIT_PACKAGES",
+    "PACKAGES_BY_ID",
+    "PaymentCreate",
+    "PaymentResponse",
+    "PaymentStatus",
     "WorkType",
 ]

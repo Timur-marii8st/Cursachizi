@@ -54,6 +54,8 @@ def _make_mock_user():
     user.username = "default"
     user.first_name = "Default"
     user.last_name = "User"
+    user.credits_remaining = 10
+    user.total_papers_generated = 0
     return user
 
 

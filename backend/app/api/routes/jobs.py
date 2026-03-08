@@ -83,6 +83,17 @@ async def create_job(
     # For MVP, create/get a default user
     default_user = await _get_or_create_default_user(db)
 
+    # Check credits
+    if default_user.credits_remaining <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail="Недостаточно кредитов. Пополните баланс через /buy.",
+        )
+
+    # Deduct 1 credit
+    default_user.credits_remaining -= 1
+    default_user.total_papers_generated += 1
+
     job = Job(
         user_id=default_user.id,
         work_type=job_in.work_type,

@@ -8,8 +8,7 @@ services:
       POSTGRES_DB: courseforge
       POSTGRES_USER: courseforge
       POSTGRES_PASSWORD: courseforge
-    ports:
-      - "5433:5432"
+    # ports removed — containers access postgres via internal network
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,8 +20,7 @@ services:
   # ── Redis ───────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # ports removed — other containers access redis via internal network
     volumes:
       - redis_data:/data
     healthcheck:

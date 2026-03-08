@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     google_translate_api_key: str = ""
     deepl_api_key: str = ""
 
+    # Robokassa payment
+    robokassa_login: str = ""
+    robokassa_password1: str = ""
+    robokassa_password2: str = ""
+    robokassa_test_mode: bool = True
+
     @model_validator(mode="after")
     def _validate_production_settings(self) -> "Settings":
         if self.app_env == "production" and not self.internal_api_key.strip():

@@ -4,6 +4,7 @@ import httpx
 import structlog
 
 from shared.schemas.job import JobCreate, JobResponse
+from shared.schemas.payment import BalanceResponse, PaymentCreate, PaymentResponse
 
 logger = structlog.get_logger()
 
@@ -61,6 +62,28 @@ class CourseForgeAPIClient:
             )
             response.raise_for_status()
             return JobResponse(**response.json())
+
+    async def create_payment(self, payment: PaymentCreate) -> PaymentResponse:
+        """Create a payment and get Robokassa URL."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self._base_url}/api/payments",
+                json=payment.model_dump(),
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return PaymentResponse(**response.json())
+
+    async def get_balance(self, telegram_id: int) -> BalanceResponse:
+        """Get user's credit balance."""
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"{self._base_url}/api/payments/balance",
+                params={"telegram_id": telegram_id},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return BalanceResponse(**response.json())
 
     async def health_check(self) -> bool:
         """Check if the backend API is healthy."""

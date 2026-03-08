@@ -194,11 +194,11 @@ class CoherenceChecker:
 
             return [
                 CoherenceIssue(
-                    issue_type=item.get("issue_type", "logic_gap"),
-                    description=item.get("description", ""),
-                    section_a=item.get("section_a", ""),
-                    section_b=item.get("section_b", ""),
-                    suggestion=item.get("suggestion", ""),
+                    issue_type=item.get("issue_type") or "logic_gap",
+                    description=item.get("description") or "",
+                    section_a=item.get("section_a") or "",
+                    section_b=item.get("section_b") or "",
+                    suggestion=item.get("suggestion") or "",
                 )
                 for item in issues_data
                 if item.get("description")

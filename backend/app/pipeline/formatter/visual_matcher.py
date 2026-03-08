@@ -338,33 +338,46 @@ class VisualTemplateMatcher:
             # Create a mutable copy via model_copy
             new_template = template.model_copy(deep=True)
 
+            def _safe_float(val: object, fallback: float | None = None) -> float | None:
+                """Convert to float, returning fallback if value is not numeric."""
+                try:
+                    return float(val)  # type: ignore[arg-type]
+                except (ValueError, TypeError):
+                    logger.warning("skipping_non_numeric_fix", value=str(val)[:50])
+                    return fallback
+
             # Apply font fixes
             if "font_size_pt" in fixes:
-                new_template.body.font.size_pt = float(fixes["font_size_pt"])
+                v = _safe_float(fixes["font_size_pt"])
+                if v is not None:
+                    new_template.body.font.size_pt = v
             if "font_name" in fixes:
                 new_template.body.font.name = fixes["font_name"]
 
             # Apply margin fixes
             if "margins" in fixes:
                 m = fixes["margins"]
-                if "left_mm" in m:
-                    new_template.margins.left_mm = float(m["left_mm"])
-                if "right_mm" in m:
-                    new_template.margins.right_mm = float(m["right_mm"])
-                if "top_mm" in m:
-                    new_template.margins.top_mm = float(m["top_mm"])
-                if "bottom_mm" in m:
-                    new_template.margins.bottom_mm = float(m["bottom_mm"])
+                for attr in ("left_mm", "right_mm", "top_mm", "bottom_mm"):
+                    if attr in m:
+                        v = _safe_float(m[attr])
+                        if v is not None:
+                            setattr(new_template.margins, attr, v)
 
             # Apply spacing fixes
             if "line_spacing" in fixes:
-                new_template.body.line_spacing = float(fixes["line_spacing"])
+                v = _safe_float(fixes["line_spacing"])
+                if v is not None:
+                    new_template.body.line_spacing = v
             if "first_line_indent_mm" in fixes:
-                new_template.body.first_line_indent_mm = float(fixes["first_line_indent_mm"])
+                v = _safe_float(fixes["first_line_indent_mm"])
+                if v is not None:
+                    new_template.body.first_line_indent_mm = v
 
             # Apply heading fixes
             if "heading_font_size_pt" in fixes:
-                new_template.heading_1.font.size_pt = float(fixes["heading_font_size_pt"])
+                v = _safe_float(fixes["heading_font_size_pt"])
+                if v is not None:
+                    new_template.heading_1.font.size_pt = v
             if "heading_bold" in fixes:
                 new_template.heading_1.font.bold = bool(fixes["heading_bold"])
             if "heading_alignment" in fixes:
@@ -375,6 +388,6 @@ class VisualTemplateMatcher:
             logger.info("fixes_applied", fixes=list(fixes.keys()))
             return new_template
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
             logger.error("fix_apply_failed", error=str(e))
             return template

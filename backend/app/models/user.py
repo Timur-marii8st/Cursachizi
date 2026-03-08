@@ -29,7 +29,7 @@ class User(Base):
     university: Mapped[str] = mapped_column(String(200), default="")
 
     # Billing
-    credits_remaining: Mapped[int] = mapped_column(default=3)  # Free tier: 3 papers
+    credits_remaining: Mapped[int] = mapped_column(default=1)  # 1 free trial credit
     total_papers_generated: Mapped[int] = mapped_column(default=0)
 
     # Timestamps

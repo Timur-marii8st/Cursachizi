@@ -9,6 +9,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 
 from bot.app.config import get_bot_settings
 from bot.app.handlers.generate import router as generate_router
+from bot.app.handlers.payment import router as payment_router
 from bot.app.handlers.start import router as start_router
 from bot.app.handlers.status import router as status_router
 from bot.app.services.api_client import CourseForgeAPIClient
@@ -45,6 +46,7 @@ def create_bot() -> tuple[Bot, Dispatcher]:
     dp.include_router(start_router)
     dp.include_router(generate_router)
     dp.include_router(status_router)
+    dp.include_router(payment_router)
 
     return bot, dp
 

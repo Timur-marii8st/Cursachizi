@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app import models as _models  # noqa: F401
 from backend.app.api.routes.health import router as health_router
 from backend.app.api.routes.jobs import router as jobs_router
+from backend.app.api.routes.offer import router as offer_router
+from backend.app.api.routes.payments import router as payments_router
 from backend.app.config import get_settings
 from backend.app.db.base import Base
 from backend.app.db.session import async_engine
@@ -88,6 +90,8 @@ def create_app() -> FastAPI:
     # Routes
     app.include_router(health_router, prefix="/api")
     app.include_router(jobs_router, prefix="/api")
+    app.include_router(payments_router, prefix="/api")
+    app.include_router(offer_router, prefix="/api")
 
     return app
 

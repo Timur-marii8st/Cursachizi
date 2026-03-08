@@ -8,6 +8,9 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Mm, Pt, RGBColor
 
+from backend.app.pipeline.formatter.reference_extractor import (
+    extract_and_renumber_references,
+)
 from shared.schemas.pipeline import (
     FactCheckResult,
     Outline,
@@ -57,6 +60,11 @@ class DocxGenerator:
         Returns:
             Bytes of the generated .docx file.
         """
+        # Extract inline references from sections and build unified bibliography
+        ref_result = extract_and_renumber_references(sections)
+        sections = ref_result.sections
+        collected_bibliography = ref_result.bibliography
+
         doc = Document()
         t = self._template
 
@@ -104,8 +112,8 @@ class DocxGenerator:
             self._add_body_text(doc, conclusion_sections[0].content)
             doc.add_page_break()
 
-        # Bibliography
-        self._add_bibliography(doc, sources)
+        # Bibliography — prefer extracted inline refs, fall back to research sources
+        self._add_bibliography(doc, sources, collected_bibliography)
 
         # Serialize to bytes
         buffer = io.BytesIO()
@@ -303,23 +311,43 @@ class DocxGenerator:
                     run.font.name = body_style.font.name
                     run.font.size = Pt(body_style.font.size_pt)
 
-    def _add_bibliography(self, doc: Document, sources: list[Source]) -> None:
-        """Add bibliography / references section in ГОСТ 7.1-2003 format."""
+    def _add_bibliography(
+        self,
+        doc: Document,
+        sources: list[Source],
+        collected_refs: list[str] | None = None,
+    ) -> None:
+        """Add bibliography / references section.
+
+        Uses references extracted from LLM-generated text (collected_refs) when
+        available. Falls back to research sources if no inline refs were found.
+        """
         self._add_heading(doc, "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ", level=1, numbered=False)
 
         t = self._template
-        for i, source in enumerate(sources, 1):
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-            pf = p.paragraph_format
-            pf.first_line_indent = Mm(t.body.first_line_indent_mm)
-            pf.line_spacing = t.body.line_spacing
 
-            # Format: [N] Author. Title [Электронный ресурс]. — URL
+        # Prefer collected inline references (from LLM text)
+        if collected_refs:
+            for i, ref_text in enumerate(collected_refs, 1):
+                self._add_bib_entry(doc, f"{i}. {ref_text}")
+            return
+
+        # Fallback to research sources
+        for i, source in enumerate(sources, 1):
             bib_entry = f"{i}. {source.title}"
             if source.url:
                 bib_entry += f" [Электронный ресурс]. — URL: {source.url}"
+            self._add_bib_entry(doc, bib_entry)
 
-            run = p.add_run(bib_entry)
-            run.font.name = t.body.font.name
-            run.font.size = Pt(t.body.font.size_pt)
+    def _add_bib_entry(self, doc: Document, text: str) -> None:
+        """Add a single bibliography entry with proper formatting."""
+        t = self._template
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        pf = p.paragraph_format
+        pf.first_line_indent = Mm(t.body.first_line_indent_mm)
+        pf.line_spacing = t.body.line_spacing
+
+        run = p.add_run(text)
+        run.font.name = t.body.font.name
+        run.font.size = Pt(t.body.font.size_pt)
