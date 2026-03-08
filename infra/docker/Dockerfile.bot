@@ -17,5 +17,6 @@ RUN pip install --no-cache-dir -e ./shared -e ./bot
 # Copy application code
 COPY shared/ shared/
 COPY bot/ bot/
+COPY docs/ docs/
 
 CMD ["python", "-m", "bot.app.main"]
