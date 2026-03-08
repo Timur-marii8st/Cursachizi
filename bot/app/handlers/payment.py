@@ -1,17 +1,19 @@
 """Payment and credit management handlers."""
 
+from pathlib import Path
+
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
-from bot.app.config import get_bot_settings
 from bot.app.keyboards.payment import (
-    get_offer_keyboard,
     get_packages_keyboard,
     get_payment_link_keyboard,
 )
 from bot.app.services.api_client import CourseForgeAPIClient
 from shared.schemas.payment import PACKAGES_BY_ID, PaymentCreate
+
+_OFFER_PATH = Path(__file__).resolve().parent.parent.parent.parent / "docs" / "pub_oferta.docx"
 
 router = Router()
 
@@ -91,9 +93,12 @@ async def cmd_balance(message: Message, api_client: CourseForgeAPIClient) -> Non
 
 @router.message(Command("offer"))
 async def cmd_offer(message: Message) -> None:
-    """Show link to public offer document."""
-    settings = get_bot_settings()
-    await message.answer(
-        "Публичная оферта — договор на оказание услуг по генерации учебных материалов.",
-        reply_markup=get_offer_keyboard(settings.api_base_url),
+    """Send the public offer document as a file."""
+    if not _OFFER_PATH.exists():
+        await message.answer("Файл оферты не найден. Обратитесь в поддержку.")
+        return
+    doc = FSInputFile(_OFFER_PATH, filename="Публичная_оферта_CourseForge.docx")
+    await message.answer_document(
+        doc,
+        caption="Публичная оферта — договор на оказание услуг по генерации учебных материалов.",
     )
