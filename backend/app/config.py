@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8000"
     internal_api_key: str = ""
 
+    # Admin
+    # Comma-separated Telegram IDs with unlimited credits (e.g. "123456789,987654321")
+    admin_telegram_ids: str = ""
+
     # Rate Limiting
     rate_limit_per_user: str = "10/hour"
     # Comma-separated list of trusted reverse proxy IPs (e.g. "10.0.0.1,172.16.0.2").
@@ -86,6 +90,18 @@ class Settings(BaseSettings):
     robokassa_password1: str = ""
     robokassa_password2: str = ""
     robokassa_test_mode: bool = True
+
+    @property
+    def admin_telegram_id_set(self) -> frozenset[int]:
+        """Parsed set of admin Telegram IDs (unlimited credits)."""
+        if not self.admin_telegram_ids.strip():
+            return frozenset()
+        result = set()
+        for part in self.admin_telegram_ids.split(","):
+            part = part.strip()
+            if part.isdigit():
+                result.add(int(part))
+        return frozenset(result)
 
     @property
     def trusted_proxies(self) -> frozenset[str]:

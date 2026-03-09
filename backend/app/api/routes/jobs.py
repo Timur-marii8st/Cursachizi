@@ -89,24 +89,35 @@ async def create_job(
     else:
         user = await _get_or_create_default_user(db)
 
-    # Atomically deduct 1 credit — prevents race conditions
-    stmt = (
-        sql_update(User)
-        .where(User.id == user.id, User.credits_remaining > 0)
-        .values(
-            credits_remaining=User.credits_remaining - 1,
-            total_papers_generated=User.total_papers_generated + 1,
+    from backend.app.config import get_settings as _get_settings
+    _settings = _get_settings()
+    is_admin = job_in.telegram_id and job_in.telegram_id in _settings.admin_telegram_id_set
+
+    if is_admin:
+        # Admins have unlimited credits — only track total_papers_generated
+        await db.execute(
+            sql_update(User)
+            .where(User.id == user.id)
+            .values(total_papers_generated=User.total_papers_generated + 1)
         )
-        .returning(User.credits_remaining)
-    )
-    result = await db.execute(stmt)
-    row = result.fetchone()
-    if row is None:
-        raise HTTPException(
-            status_code=402,
-            detail="Недостаточно кредитов. Пополните баланс через /buy.",
+    else:
+        # Atomically deduct 1 credit — prevents race conditions
+        stmt = (
+            sql_update(User)
+            .where(User.id == user.id, User.credits_remaining > 0)
+            .values(
+                credits_remaining=User.credits_remaining - 1,
+                total_papers_generated=User.total_papers_generated + 1,
+            )
+            .returning(User.credits_remaining)
         )
-    # Refresh local object to reflect DB changes
+        result = await db.execute(stmt)
+        row = result.fetchone()
+        if row is None:
+            raise HTTPException(
+                status_code=402,
+                detail="Недостаточно кредитов. Пополните баланс через /buy.",
+            )
     await db.refresh(user)
 
     job = Job(
