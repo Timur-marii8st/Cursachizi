@@ -224,13 +224,19 @@ async def download_job_document(
     except Exception:
         raise HTTPException(status_code=502, detail="Failed to retrieve document from storage")
 
+    from urllib.parse import quote
+
     safe_topic = job.topic[:50].replace("/", "_").replace("\\", "_")
-    filename = f"courseforge_{safe_topic}.docx"
+    filename_utf8 = f"courseforge_{safe_topic}.docx"
+    # RFC 5987: filename*=UTF-8'' supports unicode; ascii fallback for old clients
+    encoded = quote(filename_utf8, safe=".-_ ")
 
     return Response(
         content=doc_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f"attachment; filename=\"courseforge.docx\"; filename*=UTF-8''{encoded}"
+        },
     )
 
 
