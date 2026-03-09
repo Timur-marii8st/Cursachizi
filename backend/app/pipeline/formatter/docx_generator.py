@@ -11,7 +11,6 @@ from docx.shared import Mm, Pt, RGBColor
 from backend.app.pipeline.formatter.reference_extractor import (
     extract_and_renumber_references,
 )
-from backend.app.pipeline.writer.citation_fixer import fix_citations
 from shared.schemas.pipeline import (
     BibliographyRegistry,
     FactCheckResult,
@@ -64,12 +63,10 @@ class DocxGenerator:
         Returns:
             Bytes of the generated .docx file.
         """
-        # Post-process citations: remap LLM-generated [N] to real registry numbers,
-        # strip fake bibliography blocks, and clean up section headings.
-        if bibliography and bibliography.entries:
-            sections = fix_citations(sections, bibliography)
-        else:
-            # Legacy fallback: extract LLM bibliography blocks and renumber
+        # Citation fixing is done by the orchestrator (fix_citations) before
+        # reaching the generator. Here we only handle the legacy path when no
+        # bibliography registry is provided (e.g. direct generator usage).
+        if not (bibliography and bibliography.entries):
             ref_result = extract_and_renumber_references(sections)
             sections = ref_result.sections
 

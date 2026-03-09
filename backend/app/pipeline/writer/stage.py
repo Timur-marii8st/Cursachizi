@@ -51,6 +51,7 @@ class WriterStage:
         additional_instructions: str = "",
         config: PipelineConfig | None = None,
         progress_callback=None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> list[SectionContent]:
         """Write all sections of the coursework.
 
@@ -63,6 +64,7 @@ class WriterStage:
             additional_instructions: Extra user instructions.
             config: Pipeline configuration.
             progress_callback: Optional async callback(sections_done, sections_total).
+            bibliography: Pre-built bibliography registry from orchestrator.
 
         Returns:
             List of all written sections in order.
@@ -71,8 +73,9 @@ class WriterStage:
         model = config.writer_model
         all_sections: list[SectionContent] = []
 
-        # Build bibliography registry from real research sources
-        bibliography = BibliographyRegistry.from_sources(research.sources)
+        # Use provided registry or build from research sources
+        if bibliography is None:
+            bibliography = BibliographyRegistry.from_sources(research.sources)
         logger.info(
             "bibliography_registry_built",
             entries=len(bibliography.entries),

@@ -6,6 +6,7 @@ import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     Outline,
     OutlineChapter,
     SectionContent,
@@ -22,13 +23,13 @@ ARTICLE_SECTION_PROMPT = """Ты — опытный автор научных с
 КОНТЕКСТ ПРЕДЫДУЩИХ РАЗДЕЛОВ:
 {previous_context}
 
-ИСТОЧНИКИ ДЛЯ ИСПОЛЬЗОВАНИЯ:
+РЕЕСТР ИСТОЧНИКОВ (используй ТОЛЬКО эти источники):
 {sources_text}
 
 ТРЕБОВАНИЯ:
 1. Строгий научный стиль (третье лицо, безличные конструкции, научная терминология)
 2. Логичная структура: постановка вопроса → анализ → выводы
-3. Обязательные ссылки на источники в формате [N] (где N — номер источника) по тексту
+3. Обязательные ссылки на источники в формате [N] (где N — номер из реестра выше) по тексту
 4. Минимум 3-4 ссылки на источники в каждом разделе
 5. Объём: примерно {target_words} слов
 6. Не используй маркированные списки — только связный текст с абзацами
@@ -36,11 +37,8 @@ ARTICLE_SECTION_PROMPT = """Ты — опытный автор научных с
 8. Текст должен быть аналитическим, а не описательным
 9. НЕ используй markdown-разметку (**, ##, `, * и т.д.) — пиши чистый текст
 10. НЕ используй HTML-сущности (&nbsp; и т.д.)
-11. ОБЯЗАТЕЛЬНО в конце раздела после основного текста добавь блок библиографических ссылок, использованных в этом разделе. Формат каждой ссылки:
-[N] Фамилия И.О. Название работы. — Издательство, Год.
-Пример:
-[1] Иванов А.Б. Основы экономики. — М.: Наука, 2023.
-[2] Smith J. Machine Learning Basics. — Springer, 2022.
+11. НЕ выдумывай свои источники — используй ТОЛЬКО номера [N] из реестра выше
+12. НЕ добавляй список литературы / библиографию в конце раздела
 
 ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:
 {additional_instructions}
@@ -195,10 +193,14 @@ class ArticleSectionWriter:
         target_words: int = 600,
         additional_instructions: str = "",
         model: str | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> SectionContent:
         """Write a single article section."""
         previous_context = self._format_previous(previous_sections[-2:])
-        sources_text = self._format_sources(sources)
+        if bibliography:
+            sources_text = bibliography.format_with_content(sources)
+        else:
+            sources_text = self._format_sources(sources)
 
         prompt = ARTICLE_SECTION_PROMPT.format(
             paper_title=paper_title,

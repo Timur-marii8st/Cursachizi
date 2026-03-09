@@ -210,6 +210,7 @@ class PipelineOrchestrator:
                 additional_instructions=additional_instructions,
                 config=config,
                 progress_callback=write_progress,
+                bibliography=result.bibliography,
             )
             total_words = sum(s.word_count for s in result.sections)
             await callback.on_stage_complete(
@@ -351,6 +352,7 @@ class PipelineOrchestrator:
                     fact_check=result.fact_check,
                     university=university,
                     discipline=discipline,
+                    bibliography=result.bibliography,
                 )
             else:
                 result.document_bytes = self._formatter_stage.run(

@@ -12,6 +12,7 @@ from backend.app.pipeline.formatter.reference_extractor import (
     extract_and_renumber_references,
 )
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     FactCheckResult,
     Outline,
     SectionContent,
@@ -48,12 +49,16 @@ class ArticleDocxGenerator:
         university: str = "",
         discipline: str = "",
         author: str = "",
+        bibliography: BibliographyRegistry | None = None,
     ) -> bytes:
         """Generate a complete article .docx document."""
-        # Extract inline references and build unified bibliography
-        ref_result = extract_and_renumber_references(sections)
-        sections = ref_result.sections
-        collected_bibliography = ref_result.bibliography
+        # Citation fixing is done by the orchestrator before reaching the generator.
+        # Legacy fallback when no bibliography registry is provided.
+        collected_bibliography: list[str] | None = None
+        if not (bibliography and bibliography.entries):
+            ref_result = extract_and_renumber_references(sections)
+            sections = ref_result.sections
+            collected_bibliography = ref_result.bibliography
 
         doc = Document()
 
@@ -98,8 +103,8 @@ class ArticleDocxGenerator:
             self._add_heading(doc, "Заключение", level=1)
             self._add_body_text(doc, conclusion_sections[0].content)
 
-        # References — prefer extracted inline refs, fall back to research sources
-        self._add_bibliography(doc, sources, collected_bibliography)
+        # References — prefer registry, then extracted inline refs, then raw sources
+        self._add_bibliography(doc, sources, collected_bibliography, bibliography)
 
         # Serialize
         buffer = io.BytesIO()
@@ -278,13 +283,19 @@ class ArticleDocxGenerator:
         doc: Document,
         sources: list[Source],
         collected_refs: list[str] | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> None:
         """Add bibliography section.
 
-        Uses references extracted from LLM text when available,
-        falls back to research sources otherwise.
+        Priority: registry > extracted inline refs > raw sources.
         """
         self._add_heading(doc, "СПИСОК ЛИТЕРАТУРЫ", level=1)
+
+        # Prefer bibliography registry (real, verified sources)
+        if bibliography and bibliography.entries:
+            for entry in bibliography.entries:
+                self._add_bib_entry(doc, f"{entry.number}. {entry.formatted_reference}")
+            return
 
         if collected_refs:
             for i, ref_text in enumerate(collected_refs, 1):

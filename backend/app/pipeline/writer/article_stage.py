@@ -6,6 +6,7 @@ from backend.app.llm.provider import LLMProvider
 from backend.app.pipeline.writer.article_outliner import ArticleOutliner
 from backend.app.pipeline.writer.article_section_writer import ArticleSectionWriter
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     Outline,
     PipelineConfig,
     ResearchResult,
@@ -49,11 +50,17 @@ class ArticleWriterStage:
         additional_instructions: str = "",
         config: PipelineConfig | None = None,
         progress_callback=None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> list[SectionContent]:
         """Write all sections of the article."""
         config = config or PipelineConfig()
         model = config.writer_model
         all_sections: list[SectionContent] = []
+
+        # Use provided registry or build from research sources
+        if bibliography is None:
+            bibliography = BibliographyRegistry.from_sources(research.sources)
+        logger.info("article_bibliography_registry_built", entries=len(bibliography.entries))
 
         # Total sections: abstract + intro + body sections + conclusion
         total_sections = 3 + len(outline.chapters)  # abstract + intro + sections + conclusion
@@ -102,6 +109,7 @@ class ArticleWriterStage:
                 target_words=words_per_section,
                 additional_instructions=additional_instructions,
                 model=model,
+                bibliography=bibliography,
             )
             all_sections.append(section)
             sections_done += 1
