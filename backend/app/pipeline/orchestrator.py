@@ -1,7 +1,7 @@
 """Pipeline orchestrator — runs all stages end-to-end for a single job."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
@@ -16,17 +16,18 @@ from backend.app.pipeline.research.searcher import SearchProvider
 from backend.app.pipeline.research.stage import ResearchStage
 from backend.app.pipeline.verifier.correction_applier import CorrectionApplier
 from backend.app.pipeline.verifier.stage import VerifierStage
+from backend.app.pipeline.writer.article_stage import ArticleWriterStage
+from backend.app.pipeline.writer.citation_fixer import fix_citations
 from backend.app.pipeline.writer.coherence_checker import CoherenceChecker
 from backend.app.pipeline.writer.humanizer import Humanizer, TranslationProvider
 from backend.app.pipeline.writer.intro_conclusion_validator import IntroductionConclusionValidator
-from backend.app.pipeline.writer.article_stage import ArticleWriterStage
 from backend.app.pipeline.writer.section_evaluator import SectionEvaluator
 from backend.app.pipeline.writer.stage import WriterStage
 from shared.schemas.job import WorkType
 from shared.schemas.pipeline import (
-    BibliographyRegistry,
     CHAPTER_CONCLUSION,
     CHAPTER_INTRO,
+    BibliographyRegistry,
     CoherenceResult,
     FactCheckResult,
     Outline,
@@ -140,7 +141,7 @@ class PipelineOrchestrator:
         """
         config = config or PipelineConfig()
         callback = callback or StageCallback()
-        result = PipelineResult(started_at=datetime.now(timezone.utc))
+        result = PipelineResult(started_at=datetime.now(UTC))
 
         try:
             # Stage 1: Research
@@ -319,21 +320,23 @@ class PipelineOrchestrator:
                         f"Исправлено {corrections_applied} неточностей",
                     )
 
-            # Stage 4c: Validate inline citations against bibliography registry
+            # Stage 4c: Fix citations — remap LLM-generated [N] to real registry numbers
             if result.bibliography and result.bibliography.entries:
+                await callback.on_stage_progress(
+                    "formatting", 0, "Исправляем ссылки на источники..."
+                )
+                result.sections = fix_citations(
+                    result.sections, result.bibliography
+                )
+                # Validate after fixing
                 invalid_total = 0
                 for section in result.sections:
                     invalid = result.bibliography.validate_citations(section.content)
                     if invalid:
                         invalid_total += len(invalid)
-                        logger.warning(
-                            "invalid_citations_found",
-                            section=section.section_title[:50],
-                            invalid_numbers=invalid,
-                        )
                 if invalid_total > 0:
                     logger.warning(
-                        "citation_validation_summary",
+                        "citations_still_invalid_after_fix",
                         invalid_total=invalid_total,
                         registry_size=len(result.bibliography.entries),
                     )
@@ -415,7 +418,7 @@ class PipelineOrchestrator:
                     f"{iterations_done} итераций, оценка {final_score:.1f}/10",
                 )
 
-            result.completed_at = datetime.now(timezone.utc)
+            result.completed_at = datetime.now(UTC)
             logger.info(
                 "pipeline_complete",
                 topic=topic[:80],

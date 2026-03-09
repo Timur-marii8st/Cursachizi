@@ -56,7 +56,6 @@ class ArticleDocxGenerator:
         collected_bibliography = ref_result.bibliography
 
         doc = Document()
-        t = self._template
 
         self._setup_page(doc)
 
@@ -286,8 +285,6 @@ class ArticleDocxGenerator:
         falls back to research sources otherwise.
         """
         self._add_heading(doc, "СПИСОК ЛИТЕРАТУРЫ", level=1)
-
-        t = self._template
 
         if collected_refs:
             for i, ref_text in enumerate(collected_refs, 1):

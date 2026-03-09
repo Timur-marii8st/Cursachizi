@@ -4,9 +4,9 @@ import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider
 from shared.schemas.pipeline import (
-    BibliographyRegistry,
     CHAPTER_CONCLUSION,
     CHAPTER_INTRO,
+    BibliographyRegistry,
     Outline,
     OutlineChapter,
     SectionContent,

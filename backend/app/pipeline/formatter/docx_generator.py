@@ -10,8 +10,8 @@ from docx.shared import Mm, Pt, RGBColor
 
 from backend.app.pipeline.formatter.reference_extractor import (
     extract_and_renumber_references,
-    strip_reference_blocks,
 )
+from backend.app.pipeline.writer.citation_fixer import fix_citations
 from shared.schemas.pipeline import (
     BibliographyRegistry,
     FactCheckResult,
@@ -64,18 +64,16 @@ class DocxGenerator:
         Returns:
             Bytes of the generated .docx file.
         """
-        # Clean up residual bibliography blocks from LLM output.
-        # When registry is provided, inline [N] refs already use correct global numbers,
-        # so we only strip blocks without renumbering. Without registry, we fall back
-        # to the old behavior of extracting and renumbering.
+        # Post-process citations: remap LLM-generated [N] to real registry numbers,
+        # strip fake bibliography blocks, and clean up section headings.
         if bibliography and bibliography.entries:
-            sections = strip_reference_blocks(sections)
+            sections = fix_citations(sections, bibliography)
         else:
+            # Legacy fallback: extract LLM bibliography blocks and renumber
             ref_result = extract_and_renumber_references(sections)
             sections = ref_result.sections
 
         doc = Document()
-        t = self._template
 
         # Configure page layout
         self._setup_page(doc)
@@ -110,8 +108,9 @@ class DocxGenerator:
             for section in chapter_sections:
                 # Section heading
                 self._add_heading(doc, section.section_title, level=2)
-                # Section body
-                self._add_body_text(doc, section.content)
+                # Section body (strip duplicate heading if present)
+                body = self._strip_leading_heading(section.content, section.section_title)
+                self._add_body_text(doc, body)
 
             doc.add_page_break()
 
@@ -344,18 +343,41 @@ class DocxGenerator:
     def _strip_leading_heading(text: str, heading: str) -> str:
         """Remove a duplicate heading from the start of LLM-generated text.
 
-        LLM sometimes begins its output with the section heading (e.g. "ВВЕДЕНИЕ")
-        even though the prompt says "write only the text". This strips it.
-        Case-insensitive comparison.
+        Handles various formats:
+        - Exact heading match (case-insensitive): "ВВЕДЕНИЕ", "1.1 Title"
+        - "РАЗДЕЛ: 1.1 Title" prefix
+        - Numbered patterns: "1.1 Title" or "1.1. Title"
         """
         stripped = text.lstrip()
-        heading_upper = heading.upper()
+        if not stripped:
+            return text
+        heading_upper = heading.upper().strip()
+
+        # Check for exact heading match (case-insensitive)
         if stripped.upper().startswith(heading_upper):
             after = stripped[len(heading_upper):]
-            # Strip trailing punctuation/whitespace after the heading
             after = after.lstrip(" \t\n\r.:;-—")
             if after:
                 return after
+
+        # Check for "РАЗДЕЛ: <heading>" prefix
+        razdel_match = re.match(
+            r"^\s*(?:РАЗДЕЛ|Раздел)\s*:?\s*", stripped, re.IGNORECASE
+        )
+        if razdel_match:
+            after_razdel = stripped[razdel_match.end():]
+            if after_razdel.upper().startswith(heading_upper):
+                after = after_razdel[len(heading_upper):]
+                after = after.lstrip(" \t\n\r.:;-—")
+                if after:
+                    return after
+            # Even if heading doesn't match exactly, strip the whole first line
+            first_newline = stripped.find("\n")
+            if first_newline > 0:
+                after = stripped[first_newline:].lstrip("\n\r")
+                if after:
+                    return after
+
         return text
 
     def _add_bibliography(

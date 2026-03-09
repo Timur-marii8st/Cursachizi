@@ -349,44 +349,94 @@ class TestStripQuotes:
         assert DocxGenerator._strip_quotes("  «Менеджмент»  ") == "Менеджмент"
 
 
-class TestStripReferenceBlocksOnly:
-    """Test that strip_reference_blocks removes blocks without renumbering."""
+class TestCitationFixer:
+    """Test citation_fixer integration with docx generation."""
 
-    def test_strips_block_preserves_global_numbers(self):
-        from backend.app.pipeline.formatter.reference_extractor import strip_reference_blocks
+    def test_strips_fake_bibliography_block(self):
+        from backend.app.pipeline.writer.citation_fixer import fix_citations
+
+        sources = [
+            Source(url="https://real.com/1", title="Real Source One"),
+            Source(url="https://real.com/2", title="Real Source Two"),
+        ]
+        registry = BibliographyRegistry.from_sources(sources)
 
         sections = [
             SectionContent(
                 chapter_number=1,
                 section_title="Test",
                 content=(
-                    "Some text [5] and [12] in body.\n\n"
-                    "[5] Иванов И.И. Название. — М., 2020.\n"
-                    "[12] Петров П.П. Другое название. — СПб., 2021."
+                    "Some text [1] and [2] in body.\n\n"
+                    "[1] Фейковый Автор. Фейковая Книга. — М., 2020.\n"
+                    "[2] Другой Автор. Другая Книга. — СПб., 2021."
                 ),
                 word_count=10,
             ),
         ]
 
-        result = strip_reference_blocks(sections)
+        result = fix_citations(sections, registry)
         assert len(result) == 1
-        # Block should be stripped
-        assert "Иванов И.И. Название" not in result[0].content
-        # But inline numbers should be preserved (NOT renumbered)
-        assert "[5]" in result[0].content
-        assert "[12]" in result[0].content
+        # Fake block should be stripped
+        assert "Фейковый Автор" not in result[0].content
+        # Inline citations should be present (possibly remapped)
+        assert "[" in result[0].content
 
-    def test_no_block_no_change(self):
-        from backend.app.pipeline.formatter.reference_extractor import strip_reference_blocks
+    def test_strips_bibliography_header(self):
+        from backend.app.pipeline.writer.citation_fixer import fix_citations
+
+        sources = [Source(url="https://example.com", title="Source")]
+        registry = BibliographyRegistry.from_sources(sources)
 
         sections = [
             SectionContent(
                 chapter_number=1,
                 section_title="Test",
-                content="Just some text [3] without bibliography block.",
+                content="Body text [1].\n\nБиблиографические ссылки:",
+                word_count=5,
+            ),
+        ]
+
+        result = fix_citations(sections, registry)
+        assert "Библиографические ссылки" not in result[0].content
+
+    def test_remaps_out_of_range_citations(self):
+        from backend.app.pipeline.writer.citation_fixer import fix_citations
+
+        sources = [
+            Source(url="https://example.com/1", title="Source 1"),
+            Source(url="https://example.com/2", title="Source 2"),
+        ]
+        registry = BibliographyRegistry.from_sources(sources)
+
+        sections = [
+            SectionContent(
+                chapter_number=1,
+                section_title="Test",
+                content="According to [15] and [23], this is important.",
+                word_count=8,
+            ),
+        ]
+
+        result = fix_citations(sections, registry)
+        # Citations should be remapped to valid range [1]-[2]
+        import re
+        cited = set(int(m) for m in re.findall(r"\[(\d+)\]", result[0].content))
+        assert all(1 <= n <= 2 for n in cited)
+
+    def test_no_block_no_crash(self):
+        from backend.app.pipeline.writer.citation_fixer import fix_citations
+
+        sources = [Source(url="https://example.com", title="Source")]
+        registry = BibliographyRegistry.from_sources(sources)
+
+        sections = [
+            SectionContent(
+                chapter_number=1,
+                section_title="Test",
+                content="Just some text [1] without bibliography block.",
                 word_count=7,
             ),
         ]
 
-        result = strip_reference_blocks(sections)
-        assert result[0].content == "Just some text [3] without bibliography block."
+        result = fix_citations(sections, registry)
+        assert "[1]" in result[0].content

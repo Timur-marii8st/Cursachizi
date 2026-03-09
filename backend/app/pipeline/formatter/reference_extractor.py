@@ -129,7 +129,7 @@ def extract_and_renumber_references(
         body_text = body_text  # this is a string now
 
         # Rebuild body text from the split
-        ref_block_raw, clean_body = _split_reference_block(content)
+        _, clean_body = _split_reference_block(content)
         # Build local→global map for this section
         local_to_global: dict[int, int] = {}
         for local_num, ref_text in local_refs.items():

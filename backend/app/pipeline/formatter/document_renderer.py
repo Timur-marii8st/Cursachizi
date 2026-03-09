@@ -75,7 +75,7 @@ class DocumentRenderer:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+        _, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
 
         if process.returncode != 0:
             logger.error(
