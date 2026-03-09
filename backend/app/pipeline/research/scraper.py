@@ -1,6 +1,8 @@
 """Web page scraping and text extraction."""
 
 import asyncio
+import ipaddress
+import socket
 
 import httpx
 import structlog
@@ -9,6 +11,32 @@ import trafilatura
 from shared.schemas.pipeline import Source
 
 logger = structlog.get_logger()
+
+_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _is_safe_url(url: str) -> bool:
+    """Return False for URLs that resolve to private/internal IP ranges (SSRF protection).
+
+    Blocks: loopback (127.x, ::1), RFC-1918 private ranges, link-local (169.254.x),
+    and any URL with a non-http/https scheme.
+    """
+    try:
+        parsed = httpx.URL(url)
+        if parsed.scheme not in _ALLOWED_SCHEMES:
+            return False
+        hostname = parsed.host
+        if not hostname:
+            return False
+        # Resolve all A/AAAA records and check each one
+        addr_infos = socket.getaddrinfo(hostname, None)
+        for addr_info in addr_infos:
+            ip = ipaddress.ip_address(addr_info[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 class WebScraper:
@@ -42,6 +70,11 @@ class WebScraper:
     async def _scrape_single(self, source: Source) -> None:
         """Scrape a single source URL and update its full_text."""
         async with self._semaphore:
+            # SEC-001: SSRF protection — skip internal/private URLs
+            if not _is_safe_url(source.url):
+                logger.warning("ssrf_blocked", url=source.url[:80])
+                return
+
             try:
                 async with httpx.AsyncClient(
                     timeout=self._timeout,

@@ -34,10 +34,13 @@ class MockLLMProvider(LLMProvider):
             "max_tokens": max_tokens,
         })
 
-        content = ""
-        if self._call_index < len(self._responses):
-            content = self._responses[self._call_index]
-            self._call_index += 1
+        if self._call_index >= len(self._responses):
+            raise AssertionError(
+                f"MockLLMProvider: call #{self._call_index} not configured "
+                f"(only {len(self._responses)} responses provided)"
+            )
+        content = self._responses[self._call_index]
+        self._call_index += 1
 
         return LLMResponse(
             content=content,

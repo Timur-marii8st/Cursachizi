@@ -79,7 +79,9 @@ class TestPipelineOrchestrator:
             ],
             "conclusion_points": ["Conclusion"],
         })
-        section_text = "This is generated section content. " * 50
+        # Include citation markers so body sections pass quality evaluation
+        # and do not trigger LLM rewrites.
+        section_text = "This is generated section content [1] and more [2]. " * 40
         claims_response = json.dumps({
             "claims": [
                 {"claim_text": "Test claim", "source_section": "1.1"}
@@ -93,7 +95,8 @@ class TestPipelineOrchestrator:
         )
 
         # The pipeline will call LLM multiple times:
-        # query_expand, outline, intro, section, conclusion, claim_extract, verdict
+        # query_expand, outline, intro, section, conclusion, claim_extract, verdict,
+        # plus padding for optional section rewrites and intro/conclusion validation.
         mock_llm.set_responses([
             query_response,    # query expansion
             outline_response,  # outline
@@ -102,6 +105,9 @@ class TestPipelineOrchestrator:
             section_text,      # conclusion
             claims_response,   # claim extraction for section 1.1
             verdict_response,  # fact check verdict
+            section_text,      # section rewrite padding (if triggered)
+            section_text,      # intro_conclusion_validator fix_introduction (if triggered)
+            section_text,      # intro_conclusion_validator fix_conclusion (if triggered)
         ])
 
         config = PipelineConfig(
@@ -160,7 +166,9 @@ class TestPipelineOrchestrator:
             ],
             "conclusion_points": [],
         })
-        section_text = "Content " * 100
+        # Include citation markers so the body section passes quality evaluation
+        # and no LLM rewrite is triggered.
+        section_text = "Content [1] content [2] content. " * 30
 
         mock_llm.set_responses([
             query_response,
@@ -168,9 +176,16 @@ class TestPipelineOrchestrator:
             section_text,  # intro
             section_text,  # 1.1
             section_text,  # conclusion
+            section_text,  # intro_conclusion_validator fix_introduction (if triggered)
+            section_text,  # intro_conclusion_validator fix_conclusion (if triggered)
         ])
 
-        config = PipelineConfig(enable_fact_check=False, max_search_results=5)
+        config = PipelineConfig(
+            enable_fact_check=False,
+            enable_section_rewrite=False,
+            enable_coherence_check=False,
+            max_search_results=5,
+        )
 
         orchestrator = PipelineOrchestrator(
             llm=mock_llm, search=search_with_results

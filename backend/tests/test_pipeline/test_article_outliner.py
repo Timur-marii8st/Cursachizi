@@ -313,10 +313,10 @@ class TestArticleOutliner:
             discipline="Математика",
             page_count=8,
             research=sample_research,
-            model="google/gemini-2.5-flash",
+            model="google/google/gemini-3.1-flash-lite-preview",
         )
 
-        assert mock_llm.calls[0]["model"] == "google/gemini-2.5-flash"
+        assert mock_llm.calls[0]["model"] == "google/google/gemini-3.1-flash-lite-preview"
 
     async def test_prompt_contains_topic_and_discipline(
         self,

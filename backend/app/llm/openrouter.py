@@ -24,7 +24,7 @@ class OpenRouterProvider(LLMProvider):
     """
 
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
-    DEFAULT_MODEL = "google/gemini-2.5-flash"
+    DEFAULT_MODEL = "google/google/gemini-3.1-flash-lite-preview"
 
     def __init__(
         self,
@@ -142,7 +142,7 @@ class OpenRouterProvider(LLMProvider):
         Args:
             prompt: Text prompt to accompany the images.
             images: List of PNG/JPEG image bytes.
-            model: Vision-capable model (defaults to gemini-2.5-flash).
+            model: Vision-capable model (defaults to google/gemini-3.1-flash-lite-preview).
             system_prompt: Optional system prompt.
             temperature: Sampling temperature.
             max_tokens: Max output tokens.

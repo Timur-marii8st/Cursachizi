@@ -20,4 +20,7 @@ RUN pip install --no-cache-dir -e ./shared -e ./backend
 COPY shared/ shared/
 COPY backend/ backend/
 
+RUN adduser --disabled-password --no-create-home --uid 1000 appuser
+USER appuser
+
 CMD ["python", "-m", "arq", "backend.app.workers.tasks.WorkerSettings"]

@@ -4,6 +4,9 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+CHAPTER_INTRO: int = 0
+CHAPTER_CONCLUSION: int = 99
+
 
 class Source(BaseModel):
     """A research source found during the deep research stage."""
@@ -138,9 +141,9 @@ class PipelineConfig(BaseModel):
     max_tokens_per_section: int = Field(default=4000, ge=1000, le=8000)
     enable_fact_check: bool = True
     max_claims_per_chapter: int = Field(default=5, ge=1, le=20)
-    writer_model: str = "google/gemini-2.5-flash"
-    light_model: str = "google/gemini-2.5-flash"
-    vision_model: str = "google/gemini-2.5-flash"
+    writer_model: str = "google/google/gemini-3.1-flash-lite-preview"
+    light_model: str = "stepfun/step-3.5-flash"
+    vision_model: str = "google/google/gemini-3.1-flash-lite-preview"
     search_provider: str = "tavily"
     timeout_seconds: int = Field(default=900, ge=120, le=3600)
 

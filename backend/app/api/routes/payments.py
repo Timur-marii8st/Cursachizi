@@ -1,6 +1,6 @@
 """Payment API routes — Robokassa integration."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
@@ -123,7 +123,11 @@ async def robokassa_result(
         return f"bad sign"
 
     # Find payment
-    payment_id = int(inv_id)
+    try:
+        payment_id = int(inv_id)
+    except ValueError:
+        logger.warning("robokassa_invalid_inv_id", inv_id=inv_id)
+        return "bad inv_id"
     payment = await db.get(Payment, payment_id)
     if not payment:
         logger.warning("robokassa_payment_not_found", inv_id=inv_id)
@@ -135,7 +139,7 @@ async def robokassa_result(
 
     # Mark payment as completed
     payment.status = PaymentStatus.COMPLETED
-    payment.completed_at = datetime.utcnow()
+    payment.completed_at = datetime.now(timezone.utc)
 
     # Add credits to user
     user = await db.get(User, payment.user_id)

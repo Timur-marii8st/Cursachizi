@@ -109,7 +109,7 @@ class VisualTemplateMatcher:
         self,
         vision_llm: OpenRouterProvider,
         renderer: DocumentRenderer | None = None,
-        vision_model: str = "google/gemini-2.5-flash",
+        vision_model: str = "google/google/gemini-3.1-flash-lite-preview",
     ) -> None:
         self._vision_llm = vision_llm
         self._renderer = renderer or DocumentRenderer()

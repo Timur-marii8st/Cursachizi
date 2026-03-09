@@ -1,7 +1,7 @@
 """arq worker task definitions for pipeline execution."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import boto3
@@ -128,7 +128,7 @@ class JobProgressCallback(StageCallback):
                 job.progress_pct = progress_pct
             if message:
                 job.stage_message = message
-            job.updated_at = datetime.utcnow()
+            job.updated_at = datetime.now(timezone.utc)
             await session.commit()
 
 
@@ -148,7 +148,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
         job.status = JobStatus.RUNNING
         job.stage = JobStage.RESEARCHING
-        job.updated_at = datetime.utcnow()
+        job.updated_at = datetime.now(timezone.utc)
         await session.commit()
 
         work_type = job.work_type
@@ -223,11 +223,16 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             if not job:
                 return f"Job {job_id} disappeared"
 
+            # BUG-002: respect cancellation that happened during pipeline execution
+            if job.status == JobStatus.CANCELLED:
+                logger.info("pipeline_worker_job_cancelled", job_id=job_id)
+                return f"Job {job_id} was cancelled before completion"
+
             job.status = JobStatus.COMPLETED
             job.stage = JobStage.FINALIZING
             job.progress_pct = 100
-            job.completed_at = datetime.utcnow()
-            job.updated_at = datetime.utcnow()
+            job.completed_at = datetime.now(timezone.utc)
+            job.updated_at = datetime.now(timezone.utc)
 
             if result.research:
                 job.research_data = result.research.model_dump()
@@ -265,7 +270,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             if job:
                 job.status = JobStatus.FAILED
                 job.error_message = str(e)[:2000]
-                job.updated_at = datetime.utcnow()
+                job.updated_at = datetime.now(timezone.utc)
                 await session.commit()
 
         return f"Job {job_id} failed: {e}"

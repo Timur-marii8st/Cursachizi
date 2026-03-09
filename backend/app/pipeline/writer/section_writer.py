@@ -4,6 +4,8 @@ import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider
 from shared.schemas.pipeline import (
+    CHAPTER_CONCLUSION,
+    CHAPTER_INTRO,
     Outline,
     OutlineChapter,
     SectionContent,
@@ -11,6 +13,16 @@ from shared.schemas.pipeline import (
 )
 
 logger = structlog.get_logger()
+
+
+def _safe(text: str) -> str:
+    """Escape curly braces in user-provided text to prevent format-string injection.
+
+    Without this, a topic like "Python {format} tricks" would cause KeyError
+    when interpolated into prompt templates via str.format().
+    """
+    return text.replace("{", "{{").replace("}", "}}")
+
 
 SECTION_PROMPT = """Ты — опытный автор научных работ на русском языке. Напиши раздел курсовой работы в академическом стиле.
 
@@ -108,8 +120,8 @@ class SectionWriter:
         outline_summary = self._format_outline(outline)
 
         prompt = INTRODUCTION_PROMPT.format(
-            topic=topic,
-            discipline=discipline or "не указана",
+            topic=_safe(topic),
+            discipline=_safe(discipline) or "не указана",
             outline_summary=outline_summary,
             target_words=target_words,
         )
@@ -125,7 +137,7 @@ class SectionWriter:
         logger.info("introduction_written", words=len(content.split()))
 
         return SectionContent(
-            chapter_number=0,
+            chapter_number=CHAPTER_INTRO,
             section_title="Введение",
             content=content,
             word_count=len(content.split()),
@@ -148,14 +160,14 @@ class SectionWriter:
         sources_text = self._format_sources(sources)
 
         prompt = SECTION_PROMPT.format(
-            paper_title=paper_title,
+            paper_title=_safe(paper_title),
             chapter_number=chapter.number,
-            chapter_title=chapter.title,
-            section_title=section_title,
+            chapter_title=_safe(chapter.title),
+            section_title=_safe(section_title),
             previous_context=previous_context,
             sources_text=sources_text,
             target_words=target_words,
-            additional_instructions=additional_instructions or "Нет дополнительных инструкций.",
+            additional_instructions=_safe(additional_instructions) or "Нет дополнительных инструкций.",
         )
 
         response = await self._llm.generate(
@@ -199,7 +211,7 @@ class SectionWriter:
         chapters_summary = self._format_chapters_summary(outline, sections)
 
         prompt = CONCLUSION_PROMPT.format(
-            topic=topic,
+            topic=_safe(topic),
             conclusion_points=conclusion_points,
             chapters_summary=chapters_summary,
             target_words=target_words,
@@ -216,7 +228,7 @@ class SectionWriter:
         logger.info("conclusion_written", words=len(content.split()))
 
         return SectionContent(
-            chapter_number=99,  # Sentinel for conclusion
+            chapter_number=CHAPTER_CONCLUSION,  # Sentinel for conclusion
             section_title="Заключение",
             content=content,
             word_count=len(content.split()),

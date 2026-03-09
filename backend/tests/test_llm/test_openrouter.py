@@ -75,7 +75,7 @@ class TestOpenRouterMessageConversion:
 class TestOpenRouterProvider:
     def test_default_model(self) -> None:
         provider = OpenRouterProvider(api_key="test-key")
-        assert provider._default_model == "google/gemini-2.5-flash"
+        assert provider._default_model == "google/google/gemini-3.1-flash-lite-preview"
 
     def test_custom_model(self) -> None:
         provider = OpenRouterProvider(api_key="test-key", default_model="anthropic/claude-sonnet-4-5-20241022")

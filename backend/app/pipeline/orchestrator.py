@@ -1,7 +1,7 @@
 """Pipeline orchestrator — runs all stages end-to-end for a single job."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 import structlog
 
@@ -24,6 +24,8 @@ from backend.app.pipeline.writer.section_evaluator import SectionEvaluator
 from backend.app.pipeline.writer.stage import WriterStage
 from shared.schemas.job import WorkType
 from shared.schemas.pipeline import (
+    CHAPTER_CONCLUSION,
+    CHAPTER_INTRO,
     CoherenceResult,
     FactCheckResult,
     Outline,
@@ -136,7 +138,7 @@ class PipelineOrchestrator:
         """
         config = config or PipelineConfig()
         callback = callback or StageCallback()
-        result = PipelineResult(started_at=datetime.utcnow())
+        result = PipelineResult(started_at=datetime.now(timezone.utc))
 
         try:
             # Stage 1: Research
@@ -385,7 +387,7 @@ class PipelineOrchestrator:
                     f"{iterations_done} итераций, оценка {final_score:.1f}/10",
                 )
 
-            result.completed_at = datetime.utcnow()
+            result.completed_at = datetime.now(timezone.utc)
             logger.info(
                 "pipeline_complete",
                 topic=topic[:80],
@@ -495,7 +497,7 @@ class PipelineOrchestrator:
 
         for i, section in enumerate(updated):
             # Check introduction
-            if section.chapter_number == 0:
+            if section.chapter_number == CHAPTER_INTRO:
                 missing = self._intro_validator.check_introduction(section)
                 if missing:
                     await callback.on_stage_progress(
@@ -512,7 +514,7 @@ class PipelineOrchestrator:
                     )
 
             # Check conclusion
-            elif section.chapter_number == 99:
+            elif section.chapter_number == CHAPTER_CONCLUSION:
                 intro = next(
                     (s for s in updated if s.chapter_number == 0), None
                 )

@@ -1,12 +1,12 @@
 """Job management API routes."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from uuid import uuid4
 
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from sqlalchemy import select
+from sqlalchemy import select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.deps import (
@@ -80,22 +80,34 @@ async def create_job(
     _rate_limit: None = Depends(enforce_job_rate_limit),
 ) -> JobResponse:
     """Create a new coursework generation job."""
-    # For MVP, create/get a default user
-    default_user = await _get_or_create_default_user(db)
+    # Use real user identified by telegram_id, fall back to default for API testing
+    if job_in.telegram_id:
+        user = await _get_or_create_user_by_telegram_id(db, job_in.telegram_id)
+    else:
+        user = await _get_or_create_default_user(db)
 
-    # Check credits
-    if default_user.credits_remaining <= 0:
+    # Atomically deduct 1 credit — prevents race conditions
+    stmt = (
+        sql_update(User)
+        .where(User.id == user.id, User.credits_remaining > 0)
+        .values(
+            credits_remaining=User.credits_remaining - 1,
+            total_papers_generated=User.total_papers_generated + 1,
+        )
+        .returning(User.credits_remaining)
+    )
+    result = await db.execute(stmt)
+    row = result.fetchone()
+    if row is None:
         raise HTTPException(
             status_code=402,
             detail="Недостаточно кредитов. Пополните баланс через /buy.",
         )
-
-    # Deduct 1 credit
-    default_user.credits_remaining -= 1
-    default_user.total_papers_generated += 1
+    # Refresh local object to reflect DB changes
+    await db.refresh(user)
 
     job = Job(
-        user_id=default_user.id,
+        user_id=user.id,
         work_type=job_in.work_type,
         topic=job_in.topic,
         university=job_in.university,
@@ -161,7 +173,7 @@ async def cancel_job(
             detail=f"Cannot cancel job in status: {job.status}",
         )
     job.status = JobStatus.CANCELLED
-    job.updated_at = datetime.utcnow()
+    job.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(job)
     return _job_to_response(job)
@@ -187,7 +199,7 @@ async def upload_reference_template(
             detail=f"Cannot upload reference for job in status: {job.status}",
         )
 
-    if not file.filename or not file.filename.endswith(".docx"):
+    if not file.filename or not file.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="File must be a .docx document")
 
     content = await file.read()
@@ -195,16 +207,16 @@ async def upload_reference_template(
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
 
     # Upload to S3
+    import asyncio
+
     from backend.app.config import get_settings
-    from backend.app.workers.tasks import _upload_document_to_s3
+    from backend.app.services.storage import upload_document as _upload_document
 
     settings = get_settings()
     ref_key = f"references/{job_id}/{uuid4()}.docx"
 
-    import asyncio
-
     await asyncio.to_thread(
-        _upload_document_to_s3,
+        _upload_document,
         endpoint_url=settings.s3_endpoint_url,
         region=settings.s3_region,
         access_key=settings.s3_access_key,
@@ -215,7 +227,7 @@ async def upload_reference_template(
     )
 
     job.reference_s3_key = ref_key
-    job.updated_at = datetime.utcnow()
+    job.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(job)
 
@@ -231,6 +243,19 @@ async def _get_or_create_default_user(db: AsyncSession) -> User:
         return user
 
     user = User(username="default", first_name="Default", last_name="User")
+    db.add(user)
+    await db.flush()
+    return user
+
+
+async def _get_or_create_user_by_telegram_id(db: AsyncSession, telegram_id: int) -> User:
+    """Get or create user by Telegram ID."""
+    query = select(User).where(User.telegram_id == telegram_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+    if user:
+        return user
+    user = User(telegram_id=telegram_id, credits_remaining=1)
     db.add(user)
     await db.flush()
     return user

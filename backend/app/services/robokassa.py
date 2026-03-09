@@ -1,6 +1,7 @@
 """Robokassa payment integration."""
 
 import hashlib
+import hmac
 from urllib import parse
 
 import structlog
@@ -63,7 +64,7 @@ def verify_result_signature(
     Signature = MD5(OutSum:InvId:Password2).
     """
     expected = _signature(out_sum, inv_id, password2)
-    return expected.lower() == signature_value.lower()
+    return hmac.compare_digest(expected.lower(), signature_value.lower())
 
 
 def verify_success_signature(
@@ -77,4 +78,4 @@ def verify_success_signature(
     Signature = MD5(OutSum:InvId:Password1).
     """
     expected = _signature(out_sum, inv_id, password1)
-    return expected.lower() == signature_value.lower()
+    return hmac.compare_digest(expected.lower(), signature_value.lower())

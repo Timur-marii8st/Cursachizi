@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openrouter_api_key: str = ""
     default_llm_provider: str = "openrouter"
-    default_writer_model: str = "google/gemini-2.5-flash"
-    default_light_model: str = "google/gemini-2.5-flash"
-    vision_model: str = "google/gemini-2.5-flash"
+    default_writer_model: str = "google/google/gemini-3.1-flash-lite-preview"
+    default_light_model: str = "stepfun/step-3.5-flash"
+    vision_model: str = "google/google/gemini-3.1-flash-lite-preview"
 
     # Search Providers
     tavily_api_key: str = ""
@@ -47,8 +47,8 @@ class Settings(BaseSettings):
 
     # Object Storage
     s3_endpoint_url: str = "http://localhost:9000"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
     s3_bucket_name: str = "courseforge-documents"
     s3_region: str = "us-east-1"
 

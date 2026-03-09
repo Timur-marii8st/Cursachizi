@@ -19,4 +19,7 @@ COPY shared/ shared/
 COPY bot/ bot/
 COPY docs/ docs/
 
+RUN adduser --disabled-password --no-create-home --uid 1000 appuser
+USER appuser
+
 CMD ["python", "-m", "bot.app.main"]

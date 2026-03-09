@@ -63,6 +63,10 @@ class JobCreate(BaseModel):
         max_length=2000,
         description="Any extra instructions for the generation pipeline",
     )
+    telegram_id: int | None = Field(
+        default=None,
+        description="Telegram user ID for credit tracking",
+    )
 
 
 class JobProgress(BaseModel):

@@ -2,7 +2,7 @@
 
 import pytest
 
-from backend.app.pipeline.writer.section_writer import SectionWriter
+from backend.app.pipeline.writer.section_writer import SectionWriter, _safe
 from backend.app.testing import MockLLMProvider
 from shared.schemas.pipeline import Outline, OutlineChapter, SectionContent, Source
 
@@ -233,3 +233,51 @@ class TestSectionWriter:
         # Should only include first 8
         assert "[8]" in result
         assert "[9]" not in result
+
+    async def test_safe_escapes_curly_braces(self) -> None:
+        """SEC-003: curly braces in user input must be escaped to prevent KeyError."""
+        assert _safe("topic {foo} bar") == "topic {{foo}} bar"
+        assert _safe("{paper_title}") == "{{paper_title}}"
+        assert _safe("normal text") == "normal text"
+        assert _safe("") == ""
+
+    async def test_format_string_injection_does_not_raise(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """SEC-003: topic containing {unknown_var} must not raise KeyError."""
+        mock_llm.set_responses(["Раздел написан успешно."])
+        writer = SectionWriter(llm=mock_llm)
+
+        # This would previously raise KeyError: 'unknown_var'
+        await writer.write_introduction(
+            topic="Тема {unknown_var} исследования",
+            discipline="Менеджмент {discipline}",
+            outline=outline,
+        )
+        # Verify the literal text reached the LLM prompt (braces doubled)
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "Тема {unknown_var} исследования" in prompt or "{{unknown_var}}" in prompt
+
+    async def test_format_string_injection_in_section(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """SEC-003: additional_instructions with braces must not crash write_section."""
+        mock_llm.set_responses(["Результат."])
+        writer = SectionWriter(llm=mock_llm)
+
+        await writer.write_section(
+            paper_title="Тема {paper_title}",
+            chapter=outline.chapters[0],
+            section_title="1.1 Раздел {section_title}",
+            sources=sources,
+            previous_sections=[],
+            additional_instructions="Включить {данные} за 2024",
+        )
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "Включить" in prompt

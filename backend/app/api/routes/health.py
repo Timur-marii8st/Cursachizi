@@ -1,12 +1,15 @@
 """Health check endpoints."""
 
+from typing import Annotated
+
 import redis.asyncio as redis
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.api.deps import get_db
 from backend.app.config import get_settings
-from backend.app.db.session import async_engine
 
 router = APIRouter(tags=["health"])
 
@@ -16,34 +19,46 @@ async def health_check() -> dict:
     return {"status": "ok", "service": "courseforge"}
 
 
-@router.get("/health/ready")
-async def readiness_check() -> dict:
-    settings = get_settings()
+@router.get("/health/ready", response_model=None)
+async def readiness_check(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> JSONResponse | dict[str, str]:
     db_ok = False
     redis_ok = False
+    db_error: str | None = None
+    redis_error: str | None = None
 
     try:
-        async with async_engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        await db.execute(text("SELECT 1"))
         db_ok = True
-    except Exception:
-        db_ok = False
+    except Exception as exc:
+        db_error = str(exc)
 
-    redis_client = redis.from_url(settings.redis_url)
+    redis_pool = getattr(request.app.state, "redis_pool", None)
+    if redis_pool is None:
+        settings = get_settings()
+        redis_pool = redis.from_url(settings.redis_url)
+        owned = True
+    else:
+        owned = False
+
     try:
-        redis_ok = bool(await redis_client.ping())
-    except Exception:
-        redis_ok = False
+        redis_ok = bool(await redis_pool.ping())
+    except Exception as exc:
+        redis_error = str(exc)
     finally:
-        await redis_client.aclose()
+        if owned:
+            await redis_pool.aclose()
 
-    if settings.is_production and (not db_ok or not redis_ok):
+    if not db_ok or not redis_ok:
         return JSONResponse(
             status_code=503,
             content={
                 "status": "not_ready",
-                "checks": {"database": db_ok, "redis": redis_ok},
+                "db": "ok" if db_ok else f"error: {db_error}",
+                "redis": "ok" if redis_ok else f"error: {redis_error}",
             },
         )
 
-    return {"status": "ready", "checks": {"database": db_ok, "redis": redis_ok}}
+    return {"status": "ready", "db": "ok", "redis": "ok"}

@@ -35,14 +35,16 @@ class TestMockLLMProvider:
         assert r2.content == "second"
         assert r3.content == "third"
 
-    async def test_returns_empty_when_exhausted(self) -> None:
+    async def test_raises_when_exhausted(self) -> None:
+        import pytest
+
         mock = MockLLMProvider(responses=["only_one"])
 
         r1 = await mock.generate([LLMMessage(role="user", content="q1")])
-        r2 = await mock.generate([LLMMessage(role="user", content="q2")])
-
         assert r1.content == "only_one"
-        assert r2.content == ""
+
+        with pytest.raises(AssertionError, match="MockLLMProvider: call #1 not configured"):
+            await mock.generate([LLMMessage(role="user", content="q2")])
 
     async def test_tracks_calls(self) -> None:
         mock = MockLLMProvider(responses=["r"])

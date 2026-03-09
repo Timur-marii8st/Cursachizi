@@ -92,7 +92,7 @@ class TestVisualTemplateMatcher:
         return VisualTemplateMatcher(
             vision_llm=vision_llm,
             renderer=renderer,
-            vision_model="google/gemini-2.5-flash",
+            vision_model="google/google/gemini-3.1-flash-lite-preview",
         )
 
     @pytest.fixture

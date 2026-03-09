@@ -136,6 +136,7 @@ async def process_confirm(
             university=data.get("university", ""),
             page_count=data["page_count"],
             additional_instructions=data.get("additional_instructions", ""),
+            telegram_id=callback.from_user.id,
         )
         job = await api_client.create_job(job_create)
 
