@@ -4,6 +4,7 @@ import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     CHAPTER_CONCLUSION,
     CHAPTER_INTRO,
     Outline,
@@ -33,30 +34,27 @@ SECTION_PROMPT = """Ты — опытный автор научных работ
 КОНТЕКСТ ПРЕДЫДУЩИХ РАЗДЕЛОВ:
 {previous_context}
 
-ИСТОЧНИКИ ДЛЯ ИСПОЛЬЗОВАНИЯ:
+РЕЕСТР ИСТОЧНИКОВ (используй ТОЛЬКО эти источники, ссылайся по их номерам [N]):
 {sources_text}
 
 ТРЕБОВАНИЯ:
 1. Академический стиль изложения (третье лицо, безличные конструкции)
 2. Логичная структура: тезис → аргументация → вывод
-3. Обязательные ссылки на источники в формате [N] (где N — номер источника) по тексту
-4. Минимум 2-3 ссылки на источники в каждом разделе
-5. Объём: примерно {target_words} слов
-6. Не используй маркированные списки — только связный текст с абзацами
-7. Каждый абзац начинается с красной строки
-8. В конце раздела — краткий промежуточный вывод
-9. НЕ используй markdown-разметку (**, ##, `, * и т.д.) — пиши чистый текст
-10. НЕ используй HTML-сущности (&nbsp; и т.д.)
-11. ОБЯЗАТЕЛЬНО в конце раздела после основного текста добавь блок библиографических ссылок, использованных в этом разделе. Формат каждой ссылки:
-[N] Фамилия И.О. Название работы. — Издательство, Год.
-Пример:
-[1] Иванов А.Б. Основы экономики. — М.: Наука, 2023.
-[2] Smith J. Machine Learning Basics. — Springer, 2022.
+3. Ссылки на источники ТОЛЬКО в формате [N], где N — номер из РЕЕСТРА ИСТОЧНИКОВ выше
+4. НЕ выдумывай свои источники — используй ТОЛЬКО номера из реестра
+5. Минимум 2-3 ссылки на источники в каждом разделе
+6. Объём: примерно {target_words} слов
+7. Не используй маркированные списки — только связный текст с абзацами
+8. Каждый абзац начинается с красной строки
+9. В конце раздела — краткий промежуточный вывод
+10. НЕ используй markdown-разметку (**, ##, `, * и т.д.) — пиши чистый текст
+11. НЕ используй HTML-сущности (&nbsp; и т.д.)
+12. НЕ добавляй список литературы или библиографию в конце раздела — он будет сгенерирован автоматически
 
 ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:
 {additional_instructions}
 
-Напиши ТОЛЬКО текст раздела, без заголовка."""
+Напиши ТОЛЬКО текст раздела, без заголовка и без списка литературы."""
 
 INTRODUCTION_PROMPT = """Ты — опытный автор научных работ на русском языке. Напиши введение к курсовой работе.
 
@@ -153,11 +151,16 @@ class SectionWriter:
         target_words: int = 1000,
         additional_instructions: str = "",
         model: str | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> SectionContent:
         """Write a single chapter section."""
         # Build context from previous sections (last 2 for continuity)
         previous_context = self._format_previous(previous_sections[-2:])
-        sources_text = self._format_sources(sources)
+        # Use bibliography registry if available, otherwise fall back to raw sources
+        if bibliography:
+            sources_text = bibliography.format_with_content(sources)
+        else:
+            sources_text = self._format_sources(sources)
 
         prompt = SECTION_PROMPT.format(
             paper_title=_safe(paper_title),

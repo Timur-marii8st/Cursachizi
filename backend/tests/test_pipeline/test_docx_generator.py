@@ -6,7 +6,13 @@ import pytest
 from docx import Document
 
 from backend.app.pipeline.formatter.docx_generator import DocxGenerator
-from shared.schemas.pipeline import Outline, OutlineChapter, SectionContent, Source
+from shared.schemas.pipeline import (
+    BibliographyRegistry,
+    Outline,
+    OutlineChapter,
+    SectionContent,
+    Source,
+)
 from shared.schemas.template import GostTemplate, MarginConfig
 
 
@@ -222,3 +228,165 @@ class TestDocxGenerator:
 
         mm_to_emu = 36000
         assert abs(section.left_margin - 35 * mm_to_emu) < mm_to_emu
+
+    def test_bibliography_from_registry(
+        self,
+        generator: DocxGenerator,
+        sample_outline: Outline,
+        sample_sections: list[SectionContent],
+        sample_bib_sources: list[Source],
+    ) -> None:
+        """When BibliographyRegistry is provided, it should be used for bibliography."""
+        registry = BibliographyRegistry.from_sources(sample_bib_sources)
+        doc_bytes = generator.generate(
+            outline=sample_outline,
+            sections=sample_sections,
+            sources=sample_bib_sources,
+            bibliography=registry,
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        # All sources should appear in bibliography
+        for source in sample_bib_sources:
+            assert source.title in text
+        # Should have [Электронный ресурс] for URL sources
+        assert "[Электронный ресурс]" in text
+
+    def test_bibliography_registry_preferred_over_extracted_refs(
+        self,
+        generator: DocxGenerator,
+        sample_outline: Outline,
+        sample_bib_sources: list[Source],
+    ) -> None:
+        """Registry sources should appear, not LLM-hallucinated ones."""
+        # Section with a fake bibliography block that LLM might generate
+        sections = [
+            SectionContent(
+                chapter_number=0,
+                section_title="Введение",
+                content="Текст введения [1].\n\n[1] Фейковый Автор. Фейковая Книга. — М., 2020.",
+                word_count=10,
+            ),
+            SectionContent(
+                chapter_number=99,
+                section_title="Заключение",
+                content="Текст заключения.",
+                word_count=5,
+            ),
+        ]
+        registry = BibliographyRegistry.from_sources(sample_bib_sources)
+        doc_bytes = generator.generate(
+            outline=Outline(title="Тест", chapters=[]),
+            sections=sections,
+            sources=sample_bib_sources,
+            bibliography=registry,
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        # Real sources from registry should be in bibliography
+        assert "Иванов И.И." in text
+        # Fake source should NOT be in bibliography section
+        # (it may still be in body text if not stripped, but bibliography is from registry)
+        bib_start = text.find("СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ")
+        bib_text = text[bib_start:] if bib_start >= 0 else ""
+        assert "Фейковый Автор" not in bib_text
+
+
+class TestStripLeadingHeading:
+    """Test _strip_leading_heading static method."""
+
+    def test_strips_uppercase_heading(self):
+        text = "ВВЕДЕНИЕ\nТекст введения начинается здесь."
+        result = DocxGenerator._strip_leading_heading(text, "ВВЕДЕНИЕ")
+        assert result == "Текст введения начинается здесь."
+
+    def test_strips_heading_with_colon(self):
+        text = "ВВЕДЕНИЕ: Текст введения."
+        result = DocxGenerator._strip_leading_heading(text, "ВВЕДЕНИЕ")
+        assert result == "Текст введения."
+
+    def test_strips_heading_with_dash(self):
+        text = "ЗАКЛЮЧЕНИЕ — В ходе исследования..."
+        result = DocxGenerator._strip_leading_heading(text, "ЗАКЛЮЧЕНИЕ")
+        assert result == "В ходе исследования..."
+
+    def test_preserves_text_without_heading(self):
+        text = "Текст без заголовка в начале."
+        result = DocxGenerator._strip_leading_heading(text, "ВВЕДЕНИЕ")
+        assert result == "Текст без заголовка в начале."
+
+    def test_case_insensitive(self):
+        text = "Введение\nТекст."
+        result = DocxGenerator._strip_leading_heading(text, "ВВЕДЕНИЕ")
+        assert result == "Текст."
+
+    def test_strips_with_leading_whitespace(self):
+        text = "  ВВЕДЕНИЕ\nТекст."
+        result = DocxGenerator._strip_leading_heading(text, "ВВЕДЕНИЕ")
+        assert result == "Текст."
+
+
+class TestStripQuotes:
+    """Test _strip_quotes static method."""
+
+    def test_strips_guillemets(self):
+        assert DocxGenerator._strip_quotes("«Менеджмент»") == "Менеджмент"
+
+    def test_strips_double_quotes(self):
+        assert DocxGenerator._strip_quotes('"Менеджмент"') == "Менеджмент"
+
+    def test_preserves_unquoted(self):
+        assert DocxGenerator._strip_quotes("Менеджмент") == "Менеджмент"
+
+    def test_preserves_mismatched_quotes(self):
+        assert DocxGenerator._strip_quotes("«Менеджмент") == "«Менеджмент"
+
+    def test_strips_with_whitespace(self):
+        assert DocxGenerator._strip_quotes("  «Менеджмент»  ") == "Менеджмент"
+
+
+class TestStripReferenceBlocksOnly:
+    """Test that strip_reference_blocks removes blocks without renumbering."""
+
+    def test_strips_block_preserves_global_numbers(self):
+        from backend.app.pipeline.formatter.reference_extractor import strip_reference_blocks
+
+        sections = [
+            SectionContent(
+                chapter_number=1,
+                section_title="Test",
+                content=(
+                    "Some text [5] and [12] in body.\n\n"
+                    "[5] Иванов И.И. Название. — М., 2020.\n"
+                    "[12] Петров П.П. Другое название. — СПб., 2021."
+                ),
+                word_count=10,
+            ),
+        ]
+
+        result = strip_reference_blocks(sections)
+        assert len(result) == 1
+        # Block should be stripped
+        assert "Иванов И.И. Название" not in result[0].content
+        # But inline numbers should be preserved (NOT renumbered)
+        assert "[5]" in result[0].content
+        assert "[12]" in result[0].content
+
+    def test_no_block_no_change(self):
+        from backend.app.pipeline.formatter.reference_extractor import strip_reference_blocks
+
+        sections = [
+            SectionContent(
+                chapter_number=1,
+                section_title="Test",
+                content="Just some text [3] without bibliography block.",
+                word_count=7,
+            ),
+        ]
+
+        result = strip_reference_blocks(sections)
+        assert result[0].content == "Just some text [3] without bibliography block."

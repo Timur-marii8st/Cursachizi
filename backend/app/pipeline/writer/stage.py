@@ -6,6 +6,7 @@ from backend.app.llm.provider import LLMProvider
 from backend.app.pipeline.writer.outliner import Outliner
 from backend.app.pipeline.writer.section_writer import SectionWriter
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     Outline,
     PipelineConfig,
     ResearchResult,
@@ -70,6 +71,13 @@ class WriterStage:
         model = config.writer_model
         all_sections: list[SectionContent] = []
 
+        # Build bibliography registry from real research sources
+        bibliography = BibliographyRegistry.from_sources(research.sources)
+        logger.info(
+            "bibliography_registry_built",
+            entries=len(bibliography.entries),
+        )
+
         # Calculate total sections for progress tracking
         total_sections = 2  # intro + conclusion
         for ch in outline.chapters:
@@ -110,6 +118,7 @@ class WriterStage:
                     target_words=words_per_section,
                     additional_instructions=additional_instructions,
                     model=model,
+                    bibliography=bibliography,
                 )
                 all_sections.append(section)
                 sections_done += 1

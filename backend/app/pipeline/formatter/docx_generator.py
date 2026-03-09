@@ -10,8 +10,10 @@ from docx.shared import Mm, Pt, RGBColor
 
 from backend.app.pipeline.formatter.reference_extractor import (
     extract_and_renumber_references,
+    strip_reference_blocks,
 )
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     FactCheckResult,
     Outline,
     SectionContent,
@@ -45,6 +47,7 @@ class DocxGenerator:
         university: str = "",
         discipline: str = "",
         author: str = "",
+        bibliography: BibliographyRegistry | None = None,
     ) -> bytes:
         """Generate a complete .docx document.
 
@@ -56,14 +59,20 @@ class DocxGenerator:
             university: University name for title page.
             discipline: Discipline for title page.
             author: Author name for title page.
+            bibliography: Unified bibliography registry from real sources.
 
         Returns:
             Bytes of the generated .docx file.
         """
-        # Extract inline references from sections and build unified bibliography
-        ref_result = extract_and_renumber_references(sections)
-        sections = ref_result.sections
-        collected_bibliography = ref_result.bibliography
+        # Clean up residual bibliography blocks from LLM output.
+        # When registry is provided, inline [N] refs already use correct global numbers,
+        # so we only strip blocks without renumbering. Without registry, we fall back
+        # to the old behavior of extracting and renumbering.
+        if bibliography and bibliography.entries:
+            sections = strip_reference_blocks(sections)
+        else:
+            ref_result = extract_and_renumber_references(sections)
+            sections = ref_result.sections
 
         doc = Document()
         t = self._template
@@ -81,7 +90,8 @@ class DocxGenerator:
         intro_sections = [s for s in sections if s.section_title == "Введение"]
         if intro_sections:
             self._add_heading(doc, "ВВЕДЕНИЕ", level=1, numbered=False)
-            self._add_body_text(doc, intro_sections[0].content)
+            intro_text = self._strip_leading_heading(intro_sections[0].content, "ВВЕДЕНИЕ")
+            self._add_body_text(doc, intro_text)
             doc.add_page_break()
 
         # Chapters
@@ -109,11 +119,14 @@ class DocxGenerator:
         conclusion_sections = [s for s in sections if s.section_title == "Заключение"]
         if conclusion_sections:
             self._add_heading(doc, "ЗАКЛЮЧЕНИЕ", level=1, numbered=False)
-            self._add_body_text(doc, conclusion_sections[0].content)
+            concl_text = self._strip_leading_heading(
+                conclusion_sections[0].content, "ЗАКЛЮЧЕНИЕ"
+            )
+            self._add_body_text(doc, concl_text)
             doc.add_page_break()
 
-        # Bibliography — prefer extracted inline refs, fall back to research sources
-        self._add_bibliography(doc, sources, collected_bibliography)
+        # Bibliography — prefer registry (real sources), fall back to research sources
+        self._add_bibliography(doc, sources, bibliography=bibliography)
 
         # Serialize to bytes
         buffer = io.BytesIO()
@@ -171,7 +184,8 @@ class DocxGenerator:
         if discipline:
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(f"по дисциплине «{discipline}»")
+            clean_discipline = self._strip_quotes(discipline)
+            run = p.add_run(f"по дисциплине «{clean_discipline}»")
             run.font.name = t.body.font.name
             run.font.size = Pt(14)
 
@@ -181,7 +195,8 @@ class DocxGenerator:
         # Title
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run(f"на тему: «{title}»")
+        clean_title = self._strip_quotes(title)
+        run = p.add_run(f"на тему: «{clean_title}»")
         run.font.name = t.body.font.name
         run.font.size = Pt(16)
         run.font.bold = True
@@ -311,28 +326,58 @@ class DocxGenerator:
                     run.font.name = body_style.font.name
                     run.font.size = Pt(body_style.font.size_pt)
 
+    @staticmethod
+    def _strip_quotes(text: str) -> str:
+        """Strip surrounding «» and "" quotes from user input.
+
+        Prevents double quoting: user enters «Менеджмент», template wraps in «»,
+        result would be ««Менеджмент»» without this.
+        """
+        text = text.strip()
+        if text.startswith("«") and text.endswith("»"):
+            text = text[1:-1].strip()
+        if text.startswith('"') and text.endswith('"'):
+            text = text[1:-1].strip()
+        return text
+
+    @staticmethod
+    def _strip_leading_heading(text: str, heading: str) -> str:
+        """Remove a duplicate heading from the start of LLM-generated text.
+
+        LLM sometimes begins its output with the section heading (e.g. "ВВЕДЕНИЕ")
+        even though the prompt says "write only the text". This strips it.
+        Case-insensitive comparison.
+        """
+        stripped = text.lstrip()
+        heading_upper = heading.upper()
+        if stripped.upper().startswith(heading_upper):
+            after = stripped[len(heading_upper):]
+            # Strip trailing punctuation/whitespace after the heading
+            after = after.lstrip(" \t\n\r.:;-—")
+            if after:
+                return after
+        return text
+
     def _add_bibliography(
         self,
         doc: Document,
         sources: list[Source],
-        collected_refs: list[str] | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> None:
         """Add bibliography / references section.
 
-        Uses references extracted from LLM-generated text (collected_refs) when
-        available. Falls back to research sources if no inline refs were found.
+        Uses the bibliography registry (built from real research sources) when
+        available. Falls back to formatting raw Source objects.
         """
         self._add_heading(doc, "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ", level=1, numbered=False)
 
-        t = self._template
-
-        # Prefer collected inline references (from LLM text)
-        if collected_refs:
-            for i, ref_text in enumerate(collected_refs, 1):
-                self._add_bib_entry(doc, f"{i}. {ref_text}")
+        # Prefer bibliography registry (real, verified sources)
+        if bibliography and bibliography.entries:
+            for entry in bibliography.entries:
+                self._add_bib_entry(doc, f"{entry.number}. {entry.formatted_reference}")
             return
 
-        # Fallback to research sources
+        # Fallback to research sources (same format as registry would produce)
         for i, source in enumerate(sources, 1):
             bib_entry = f"{i}. {source.title}"
             if source.url:

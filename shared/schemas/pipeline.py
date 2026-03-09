@@ -52,6 +52,93 @@ class Outline(BaseModel):
     abstract_points: list[str] = Field(default_factory=list)
 
 
+class BibliographyEntry(BaseModel):
+    """A single entry in the unified bibliography registry.
+
+    Built from real research sources — never hallucinated by LLM.
+    """
+
+    number: int
+    title: str
+    url: str = ""
+    formatted_reference: str
+
+
+class BibliographyRegistry(BaseModel):
+    """Unified numbered bibliography built from real research sources.
+
+    Created after the research stage and passed to all section writers
+    so that inline citations [N] reference real, verified sources.
+    """
+
+    entries: list[BibliographyEntry] = Field(default_factory=list)
+
+    @classmethod
+    def from_sources(cls, sources: list["Source"]) -> "BibliographyRegistry":
+        """Build a registry from research sources."""
+        entries = []
+        for i, source in enumerate(sources, 1):
+            # Format as ГОСТ-style electronic resource
+            ref = source.title
+            if source.url:
+                ref += f" [Электронный ресурс]. — URL: {source.url}"
+            entries.append(BibliographyEntry(
+                number=i,
+                title=source.title,
+                url=source.url,
+                formatted_reference=ref,
+            ))
+        return cls(entries=entries)
+
+    def format_for_prompt(self, max_entries: int | None = None) -> str:
+        """Format registry for inclusion in LLM prompts.
+
+        Shows all entries with their global numbers so LLM can cite them.
+        """
+        entries = self.entries[:max_entries] if max_entries else self.entries
+        if not entries:
+            return "Источники не найдены."
+        lines = []
+        for entry in entries:
+            lines.append(f"[{entry.number}] {entry.formatted_reference}")
+        return "\n".join(lines)
+
+    def format_with_content(
+        self, sources: list["Source"], max_content_entries: int = 8
+    ) -> str:
+        """Format registry with source content for section writing prompts.
+
+        Includes full text/snippet for the first N sources so LLM has context.
+        All source numbers are shown so LLM can cite any of them.
+        """
+        if not self.entries:
+            return "Источники не предоставлены."
+        lines = []
+        source_map = {s.url: s for s in sources}
+        for entry in self.entries:
+            source = source_map.get(entry.url)
+            if source and len(lines) < max_content_entries:
+                text = source.full_text[:1500] if source.full_text else source.snippet
+                lines.append(f"[{entry.number}] {entry.title}\n{text}\n")
+            else:
+                lines.append(f"[{entry.number}] {entry.title}")
+        return "\n".join(lines)
+
+    def get_entry(self, number: int) -> BibliographyEntry | None:
+        """Get entry by its global number."""
+        for entry in self.entries:
+            if entry.number == number:
+                return entry
+        return None
+
+    def validate_citations(self, text: str) -> list[int]:
+        """Find citation numbers in text that don't exist in the registry."""
+        import re
+        cited = set(int(m) for m in re.findall(r"\[(\d+)\]", text))
+        valid = set(e.number for e in self.entries)
+        return sorted(cited - valid)
+
+
 class SectionContent(BaseModel):
     """Generated content for a single section."""
 

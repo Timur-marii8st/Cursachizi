@@ -52,6 +52,32 @@ class RenumberingResult:
     bibliography: list[str] = field(default_factory=list)
 
 
+def strip_reference_blocks(sections: list[SectionContent]) -> list[SectionContent]:
+    """Strip trailing bibliography blocks from section text WITHOUT renumbering.
+
+    Use this when a BibliographyRegistry is provided and inline citations
+    already use correct global numbers. We only want to remove any residual
+    bibliography blocks the LLM might have appended despite being told not to.
+    """
+    result = []
+    for section in sections:
+        _refs, clean_body = _split_reference_block(section.content)
+        if _refs:
+            logger.info(
+                "stripped_residual_ref_block",
+                section=section.section_title[:50],
+                refs_stripped=len(_refs),
+            )
+        result.append(SectionContent(
+            chapter_number=section.chapter_number,
+            section_title=section.section_title,
+            content=clean_body,
+            citations=section.citations,
+            word_count=len(clean_body.split()),
+        ))
+    return result
+
+
 def extract_and_renumber_references(
     sections: list[SectionContent],
 ) -> RenumberingResult:

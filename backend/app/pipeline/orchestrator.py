@@ -24,6 +24,7 @@ from backend.app.pipeline.writer.section_evaluator import SectionEvaluator
 from backend.app.pipeline.writer.stage import WriterStage
 from shared.schemas.job import WorkType
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     CHAPTER_CONCLUSION,
     CHAPTER_INTRO,
     CoherenceResult,
@@ -45,6 +46,7 @@ class PipelineResult:
 
     outline: Outline | None = None
     research: ResearchResult | None = None
+    bibliography: BibliographyRegistry | None = None
     sections: list[SectionContent] = field(default_factory=list)
     coherence: CoherenceResult | None = None
     fact_check: FactCheckResult | None = None
@@ -157,6 +159,11 @@ class PipelineOrchestrator:
                     report=diversity_report,
                 )
 
+            # Build unified bibliography registry from real research sources
+            result.bibliography = BibliographyRegistry.from_sources(
+                result.research.sources
+            )
+
             await callback.on_stage_complete(
                 "researching",
                 f"Найдено {len(result.research.sources)} источников "
@@ -221,6 +228,7 @@ class PipelineOrchestrator:
                     page_count=page_count,
                     config=config,
                     callback=callback,
+                    bibliography=result.bibliography,
                 )
                 total_words = sum(s.word_count for s in result.sections)
 
@@ -311,6 +319,25 @@ class PipelineOrchestrator:
                         f"Исправлено {corrections_applied} неточностей",
                     )
 
+            # Stage 4c: Validate inline citations against bibliography registry
+            if result.bibliography and result.bibliography.entries:
+                invalid_total = 0
+                for section in result.sections:
+                    invalid = result.bibliography.validate_citations(section.content)
+                    if invalid:
+                        invalid_total += len(invalid)
+                        logger.warning(
+                            "invalid_citations_found",
+                            section=section.section_title[:50],
+                            invalid_numbers=invalid,
+                        )
+                if invalid_total > 0:
+                    logger.warning(
+                        "citation_validation_summary",
+                        invalid_total=invalid_total,
+                        registry_size=len(result.bibliography.entries),
+                    )
+
             # Stage 5: Format
             await callback.on_stage_start("formatting", "Форматируем документ...")
             if is_article:
@@ -330,6 +357,7 @@ class PipelineOrchestrator:
                     fact_check=result.fact_check,
                     university=university,
                     discipline=discipline,
+                    bibliography=result.bibliography,
                 )
             await callback.on_stage_complete(
                 "formatting",
@@ -418,6 +446,7 @@ class PipelineOrchestrator:
         page_count: int,
         config: PipelineConfig,
         callback: StageCallback,
+        bibliography: BibliographyRegistry | None = None,
     ) -> list[SectionContent]:
         """Evaluate each section and rewrite those that fail quality checks."""
         body_pages = page_count - 4  # Minus intro/conclusion/title/toc
@@ -453,6 +482,7 @@ class PipelineOrchestrator:
                     sources=research.sources,
                     target_words=target_words_per_section,
                     model=config.writer_model,
+                    bibliography=bibliography,
                 )
 
                 evaluation = self._section_evaluator.evaluate(
