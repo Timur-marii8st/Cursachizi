@@ -15,6 +15,6 @@ node_modules
 .ruff_cache
 *.log
 test_output*.docx
-docs/
+docs/*.md
 CLAUDE.md
 .claude/
