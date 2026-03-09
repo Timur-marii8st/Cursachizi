@@ -405,6 +405,7 @@ class PipelineOrchestrator:
                     max_iterations=config.visual_match_max_iterations,
                     university=university,
                     discipline=discipline,
+                    bibliography=result.bibliography,
                 )
 
                 iterations_done = len(result.visual_match_results)

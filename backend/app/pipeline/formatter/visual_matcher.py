@@ -21,6 +21,7 @@ from backend.app.llm.openrouter import OpenRouterProvider
 from backend.app.pipeline.formatter.document_renderer import DocumentRenderer
 from backend.app.pipeline.formatter.docx_generator import DocxGenerator
 from shared.schemas.pipeline import (
+    BibliographyRegistry,
     Outline,
     SectionContent,
     Source,
@@ -157,6 +158,7 @@ class VisualTemplateMatcher:
         target_score: float = 8.5,
         university: str = "",
         discipline: str = "",
+        bibliography: BibliographyRegistry | None = None,
     ) -> tuple[bytes, GostTemplate, list[VisualMatchResult]]:
         """Iteratively refine document formatting to match a reference.
 
@@ -170,6 +172,7 @@ class VisualTemplateMatcher:
             target_score: Score threshold to stop iterating (0-10).
             university: University name.
             discipline: Discipline name.
+            bibliography: Real bibliography registry for source list.
 
         Returns:
             Tuple of (final_docx_bytes, final_template, iteration_results).
@@ -185,6 +188,7 @@ class VisualTemplateMatcher:
             doc_bytes = generator.generate(
                 outline=outline, sections=sections, sources=sources,
                 university=university, discipline=discipline,
+                bibliography=bibliography,
             )
             return doc_bytes, template, results
 
@@ -196,6 +200,7 @@ class VisualTemplateMatcher:
             doc_bytes = generator.generate(
                 outline=outline, sections=sections, sources=sources,
                 university=university, discipline=discipline,
+                bibliography=bibliography,
             )
 
             # Render our document
@@ -248,6 +253,7 @@ class VisualTemplateMatcher:
         final_bytes = generator.generate(
             outline=outline, sections=sections, sources=sources,
             university=university, discipline=discipline,
+            bibliography=bibliography,
         )
 
         return final_bytes, template, results
