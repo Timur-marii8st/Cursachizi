@@ -85,6 +85,16 @@ class CourseForgeAPIClient:
             response.raise_for_status()
             return BalanceResponse(**response.json())
 
+    async def download_document(self, job_id: str) -> bytes:
+        """Download generated .docx bytes for a completed job."""
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.get(
+                f"{self._base_url}/api/jobs/{job_id}/download",
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            return response.content
+
     async def health_check(self) -> bool:
         """Check if the backend API is healthy."""
         try:

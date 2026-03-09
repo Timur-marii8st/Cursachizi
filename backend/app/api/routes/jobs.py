@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from arq.connections import ArqRedis
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -179,6 +182,47 @@ async def cancel_job(
     return _job_to_response(job)
 
 
+@router.get("/{job_id}/download")
+async def download_job_document(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Download the generated .docx document for a completed job."""
+    job = await db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Document not ready yet")
+    if not job.document_s3_key:
+        raise HTTPException(status_code=404, detail="Document not found in storage")
+
+    from backend.app.config import get_settings
+    from backend.app.services.storage import download_document
+
+    settings = get_settings()
+    try:
+        doc_bytes = await asyncio.to_thread(
+            download_document,
+            endpoint_url=settings.s3_endpoint_url,
+            region=settings.s3_region,
+            access_key=settings.s3_access_key,
+            secret_key=settings.s3_secret_key,
+            bucket=settings.s3_bucket_name,
+            object_key=job.document_s3_key,
+        )
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to retrieve document from storage")
+
+    safe_topic = job.topic[:50].replace("/", "_").replace("\\", "_")
+    filename = f"courseforge_{safe_topic}.docx"
+
+    return Response(
+        content=doc_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/{job_id}/reference", response_model=JobResponse)
 async def upload_reference_template(
     job_id: str,
@@ -205,6 +249,11 @@ async def upload_reference_template(
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:  # 10 MB limit
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
+
+    # SEC-005: validate ZIP magic bytes — .docx is a ZIP archive (PK\x03\x04)
+    # Extension alone is client-controlled and trivially spoofable.
+    if not content.startswith(b"PK\x03\x04"):
+        raise HTTPException(status_code=400, detail="Invalid .docx file: not a valid ZIP archive")
 
     # Upload to S3
     import asyncio

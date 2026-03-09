@@ -12,6 +12,7 @@ import httpx
 import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider, LLMResponse
+from backend.app.utils.retry import with_http_retry
 
 logger = structlog.get_logger()
 
@@ -21,6 +22,9 @@ class OpenRouterProvider(LLMProvider):
 
     OpenRouter is OpenAI-compatible, so we use the same chat completions format.
     Vision messages are supported via base64-encoded images in content arrays.
+
+    The provider maintains a persistent httpx.AsyncClient (PERF-001) to reuse
+    TCP/TLS connections across multiple generate() calls within the same job.
     """
 
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -35,6 +39,16 @@ class OpenRouterProvider(LLMProvider):
         self._api_key = api_key
         self._default_model = default_model or self.DEFAULT_MODEL
         self._app_name = app_name
+        # Persistent client — reused across all calls within this provider instance.
+        # Avoids per-call TLS handshake overhead (PERF-001).
+        self._client = httpx.AsyncClient(
+            timeout=120.0,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+
+    async def aclose(self) -> None:
+        """Release the underlying HTTP client."""
+        await self._client.aclose()
 
     async def generate(
         self,
@@ -48,8 +62,8 @@ class OpenRouterProvider(LLMProvider):
         api_messages = self._convert_messages(messages, system_prompt)
         used_model = model or self._default_model
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
+        async def _call() -> dict:
+            response = await self._client.post(
                 self.API_URL,
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
@@ -72,7 +86,10 @@ class OpenRouterProvider(LLMProvider):
                     model=used_model,
                 )
             response.raise_for_status()
-            data = response.json()
+            return response.json()
+
+        # TEST-005: retry on 429/5xx with exponential backoff
+        data = await with_http_retry(_call)
 
         choice = data["choices"][0]
         usage = data.get("usage", {})

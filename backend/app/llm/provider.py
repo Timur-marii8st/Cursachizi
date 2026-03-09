@@ -31,6 +31,9 @@ class LLMResponse:
 class LLMProvider(ABC):
     """Abstract interface for LLM providers."""
 
+    async def aclose(self) -> None:
+        """Close any underlying resources (e.g. HTTP client). No-op by default."""
+
     @abstractmethod
     async def generate(
         self,

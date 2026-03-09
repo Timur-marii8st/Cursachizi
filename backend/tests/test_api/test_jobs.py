@@ -295,3 +295,127 @@ class TestApiKeyEnforcement:
                 assert response.status_code == 200
 
         app.dependency_overrides.clear()
+
+
+class TestReferenceUploadSec005:
+    """SEC-005: file upload must validate magic bytes, not just extension."""
+
+    async def test_valid_docx_accepted(self, client: AsyncClient, sample_job) -> None:
+        """Real ZIP magic bytes (PK\\x03\\x04) should pass validation and reach S3 upload."""
+        sample_job.status = "pending"
+        docx_bytes = b"PK\x03\x04" + b"\x00" * 100
+        with patch("backend.app.services.storage.upload_document", return_value=None):
+            response = await client.post(
+                f"/api/jobs/{sample_job.id}/reference",
+                files={"file": ("template.docx", docx_bytes, "application/octet-stream")},
+            )
+        # Passes magic bytes check — should succeed (200)
+        assert response.status_code == 200
+
+    async def test_non_zip_file_rejected(self, client: AsyncClient, sample_job) -> None:
+        """File with .docx extension but wrong magic bytes must be rejected with 400."""
+        sample_job.status = "pending"
+        fake_docx = b"This is just a text file, not a ZIP archive."
+        response = await client.post(
+            f"/api/jobs/{sample_job.id}/reference",
+            files={"file": ("evil.docx", fake_docx, "application/octet-stream")},
+        )
+        assert response.status_code == 400
+        assert "ZIP" in response.json()["detail"]
+
+    async def test_exe_renamed_to_docx_rejected(self, client: AsyncClient, sample_job) -> None:
+        """EXE magic bytes (MZ) renamed to .docx must be rejected."""
+        sample_job.status = "pending"
+        fake_exe = b"MZ\x90\x00" + b"\xff" * 100  # Windows PE header
+        response = await client.post(
+            f"/api/jobs/{sample_job.id}/reference",
+            files={"file": ("malware.docx", fake_exe, "application/octet-stream")},
+        )
+        assert response.status_code == 400
+
+    async def test_txt_extension_rejected(self, client: AsyncClient, sample_job) -> None:
+        """Extension check runs first: .txt is rejected before magic bytes."""
+        sample_job.status = "pending"
+        response = await client.post(
+            f"/api/jobs/{sample_job.id}/reference",
+            files={"file": ("document.txt", b"PK\x03\x04" + b"\x00" * 50, "text/plain")},
+        )
+        assert response.status_code == 400
+
+
+class TestRateLimitSec002:
+    """SEC-002: X-Forwarded-For should only be trusted from known proxy IPs."""
+
+    async def test_xff_ignored_without_trusted_proxy(self) -> None:
+        """Direct client: X-Forwarded-For header must be ignored for rate-limit key."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # Connecting from 10.0.0.5 (untrusted), claiming to be 1.2.3.4 via XFF
+        mock_request = MagicMock()
+        mock_request.client.host = "10.0.0.5"
+        mock_request.headers = {"x-forwarded-for": "1.2.3.4"}
+        mock_request.app.state.redis_pool = None
+
+        captured_key: list[str] = []
+
+        async def fake_incr(key: str) -> int:
+            captured_key.append(key)
+            return 1
+
+        fake_redis = AsyncMock()
+        fake_redis.incr = fake_incr
+        fake_redis.expire = AsyncMock()
+        fake_redis.ttl = AsyncMock(return_value=3600)
+
+        with (
+            patch("backend.app.api.deps.get_settings") as mock_settings,
+            patch("backend.app.api.deps.redis.from_url", return_value=fake_redis),
+        ):
+            settings = MagicMock()
+            settings.rate_limit_per_user = "10/hour"
+            settings.trusted_proxies = frozenset()  # no trusted proxies configured
+            settings.is_production = False
+            mock_settings.return_value = settings
+
+            await enforce_job_rate_limit(mock_request, x_api_key=None)
+
+        # Key must use the direct connecting IP, not the spoofed XFF value
+        assert captured_key, "Redis incr was not called"
+        assert "10.0.0.5" in captured_key[0]
+        assert "1.2.3.4" not in captured_key[0]
+
+    async def test_xff_trusted_from_known_proxy(self) -> None:
+        """When connecting from a known proxy IP, X-Forwarded-For is used."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_request = MagicMock()
+        mock_request.client.host = "10.0.0.1"  # trusted proxy
+        mock_request.headers = {"x-forwarded-for": "203.0.113.42"}
+        mock_request.app.state.redis_pool = None
+
+        captured_key: list[str] = []
+
+        async def fake_incr(key: str) -> int:
+            captured_key.append(key)
+            return 1
+
+        fake_redis = AsyncMock()
+        fake_redis.incr = fake_incr
+        fake_redis.expire = AsyncMock()
+        fake_redis.ttl = AsyncMock(return_value=3600)
+
+        with (
+            patch("backend.app.api.deps.get_settings") as mock_settings,
+            patch("backend.app.api.deps.redis.from_url", return_value=fake_redis),
+        ):
+            settings = MagicMock()
+            settings.rate_limit_per_user = "10/hour"
+            settings.trusted_proxies = frozenset({"10.0.0.1"})  # proxy is trusted
+            settings.is_production = False
+            mock_settings.return_value = settings
+
+            await enforce_job_rate_limit(mock_request, x_api_key=None)
+
+        # Key must use the real client IP from X-Forwarded-For
+        assert captured_key
+        assert "203.0.113.42" in captured_key[0]

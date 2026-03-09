@@ -59,11 +59,19 @@ async def enforce_job_rate_limit(
     except ValueError:
         max_requests, window_seconds = 10, 3600
 
-    client_id = (
-        (x_api_key or "").strip()
-        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        or (request.client.host if request.client else "unknown")
-    )
+    # SEC-002: only trust X-Forwarded-For when the direct connecting IP
+    # is a known reverse proxy.  Without this check, any client can spoof
+    # the header and rotate their apparent IP to bypass rate limiting.
+    client_host = request.client.host if request.client else "unknown"
+    if (x_api_key or "").strip():
+        client_id = x_api_key.strip()
+    elif client_host in settings.trusted_proxies:
+        client_id = (
+            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or client_host
+        )
+    else:
+        client_id = client_host
     rate_key = f"rate:jobs:{client_id}"
 
     redis_pool = getattr(request.app.state, "redis_pool", None)

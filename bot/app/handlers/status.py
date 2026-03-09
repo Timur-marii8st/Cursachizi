@@ -2,7 +2,7 @@
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import BufferedInputFile, Message
 
 from bot.app.services.api_client import CourseForgeAPIClient
 from shared.schemas.job import JobStage, JobStatus
@@ -52,16 +52,31 @@ async def cmd_status(
             if job.progress.message:
                 stage_line += f"\nDetail: {job.progress.message}"
 
-        doc_line = f"\nDocument: {job.document_url}" if job.document_url else ""
-        err_line = f"\nError: {job.error_message}" if job.error_message else ""
+        err_line = f"\nОшибка: {job.error_message}" if job.error_message else ""
 
         await message.answer(
-            f"{status_icon} Job {job.id}\n"
-            f"Status: {job.status}\n"
-            f"Topic: {job.topic}"
+            f"{status_icon} Задание {job.id}\n"
+            f"Статус: {job.status}\n"
+            f"Тема: {job.topic}"
             f"{stage_line}"
-            f"{doc_line}"
             f"{err_line}"
         )
+
+        # If completed — download and send as Telegram document
+        if job.status == JobStatus.COMPLETED and job.document_url:
+            try:
+                doc_bytes = await api_client.download_document(job.id)
+                safe_topic = job.topic[:40].replace("/", "_")
+                filename = f"courseforge_{safe_topic}.docx"
+                await message.answer_document(
+                    BufferedInputFile(doc_bytes, filename=filename),
+                    caption="Ваша курсовая работа готова!",
+                )
+            except Exception:
+                await message.answer(
+                    "Документ готов, но не удалось загрузить файл. "
+                    "Попробуйте /status ещё раз или обратитесь в поддержку."
+                )
+
     except Exception:
-        await message.answer("Could not fetch status. Please try again later.")
+        await message.answer("Не удалось получить статус. Попробуйте позже.")

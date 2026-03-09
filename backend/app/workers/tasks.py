@@ -243,7 +243,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
             if result.document_bytes:
                 document_key = f"jobs/{job_id}/{uuid4()}.docx"
-                document_url = await asyncio.to_thread(
+                await asyncio.to_thread(
                     _upload_document_to_s3,
                     endpoint_url=settings.s3_endpoint_url,
                     region=settings.s3_region,
@@ -254,7 +254,9 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
                     document_bytes=result.document_bytes,
                 )
                 job.document_s3_key = document_key
-                job.document_url = document_url
+                # Use backend API download URL instead of internal MinIO presigned URL.
+                # MinIO is not exposed externally; the backend proxies the download.
+                job.document_url = f"{settings.api_base_url}/api/jobs/{job_id}/download"
                 job.stage_message = f"Document ready ({len(result.document_bytes) // 1024} KB)"
 
             await session.commit()

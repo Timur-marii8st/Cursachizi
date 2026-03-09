@@ -60,6 +60,9 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     rate_limit_per_user: str = "10/hour"
+    # Comma-separated list of trusted reverse proxy IPs (e.g. "10.0.0.1,172.16.0.2").
+    # X-Forwarded-For is only trusted when the connecting IP is in this list (SEC-002).
+    trusted_proxy_ips: str = ""
 
     # Pipeline
     max_search_results: int = 20
@@ -83,6 +86,13 @@ class Settings(BaseSettings):
     robokassa_password1: str = ""
     robokassa_password2: str = ""
     robokassa_test_mode: bool = True
+
+    @property
+    def trusted_proxies(self) -> frozenset[str]:
+        """Parsed set of trusted proxy IP addresses."""
+        if not self.trusted_proxy_ips.strip():
+            return frozenset()
+        return frozenset(ip.strip() for ip in self.trusted_proxy_ips.split(",") if ip.strip())
 
     @model_validator(mode="after")
     def _validate_production_settings(self) -> "Settings":
