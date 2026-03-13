@@ -1,7 +1,7 @@
 """arq worker task definitions for pipeline execution."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import boto3
@@ -9,6 +9,7 @@ import structlog
 from arq.connections import RedisSettings
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from sqlalchemy import update as sql_update
 
 from backend.app.api.deps import get_llm_provider, get_search_provider, get_vision_llm_provider
 from backend.app.config import get_settings
@@ -128,7 +129,7 @@ class JobProgressCallback(StageCallback):
                 job.progress_pct = progress_pct
             if message:
                 job.stage_message = message
-            job.updated_at = datetime.now(timezone.utc)
+            job.updated_at = datetime.now(UTC)
             await session.commit()
 
 
@@ -148,7 +149,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
         job.status = JobStatus.RUNNING
         job.stage = JobStage.RESEARCHING
-        job.updated_at = datetime.now(timezone.utc)
+        job.updated_at = datetime.now(UTC)
         await session.commit()
 
         work_type = job.work_type
@@ -206,63 +207,69 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             timeout_seconds=settings.pipeline_timeout_seconds,
         )
 
-        result = await orchestrator.run(
-            topic=topic,
-            discipline=discipline,
-            university=university,
-            page_count=page_count,
-            additional_instructions=additional_instructions,
-            work_type=work_type,
-            config=config,
-            callback=callback,
-            reference_docx_bytes=reference_docx_bytes,
-        )
+        try:
+            result = await orchestrator.run(
+                topic=topic,
+                discipline=discipline,
+                university=university,
+                page_count=page_count,
+                additional_instructions=additional_instructions,
+                work_type=work_type,
+                config=config,
+                callback=callback,
+                reference_docx_bytes=reference_docx_bytes,
+            )
 
-        async with AsyncSessionLocal() as session:
-            job = await session.get(Job, job_id)
-            if not job:
-                return f"Job {job_id} disappeared"
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Job, job_id)
+                if not job:
+                    return f"Job {job_id} disappeared"
 
-            # BUG-002: respect cancellation that happened during pipeline execution
-            if job.status == JobStatus.CANCELLED:
-                logger.info("pipeline_worker_job_cancelled", job_id=job_id)
-                return f"Job {job_id} was cancelled before completion"
+                # BUG-002: respect cancellation that happened during pipeline execution
+                if job.status == JobStatus.CANCELLED:
+                    logger.info("pipeline_worker_job_cancelled", job_id=job_id)
+                    return f"Job {job_id} was cancelled before completion"
 
-            job.status = JobStatus.COMPLETED
-            job.stage = JobStage.FINALIZING
-            job.progress_pct = 100
-            job.completed_at = datetime.now(timezone.utc)
-            job.updated_at = datetime.now(timezone.utc)
+                job.status = JobStatus.COMPLETED
+                job.stage = JobStage.FINALIZING
+                job.progress_pct = 100
+                job.completed_at = datetime.now(UTC)
+                job.updated_at = datetime.now(UTC)
 
-            if result.research:
-                job.research_data = result.research.model_dump()
-            if result.outline:
-                job.outline_data = result.outline.model_dump()
-            if result.fact_check:
-                job.fact_check_data = result.fact_check.model_dump()
+                if result.research:
+                    job.research_data = result.research.model_dump()
+                if result.outline:
+                    job.outline_data = result.outline.model_dump()
+                if result.fact_check:
+                    job.fact_check_data = result.fact_check.model_dump()
 
-            if result.document_bytes:
-                document_key = f"jobs/{job_id}/{uuid4()}.docx"
-                await asyncio.to_thread(
-                    _upload_document_to_s3,
-                    endpoint_url=settings.s3_endpoint_url,
-                    region=settings.s3_region,
-                    access_key=settings.s3_access_key,
-                    secret_key=settings.s3_secret_key,
-                    bucket=settings.s3_bucket_name,
-                    object_key=document_key,
-                    document_bytes=result.document_bytes,
-                )
-                job.document_s3_key = document_key
-                # Use backend API download URL instead of internal MinIO presigned URL.
-                # MinIO is not exposed externally; the backend proxies the download.
-                job.document_url = f"{settings.api_base_url}/api/jobs/{job_id}/download"
-                job.stage_message = f"Document ready ({len(result.document_bytes) // 1024} KB)"
+                if result.document_bytes:
+                    document_key = f"jobs/{job_id}/{uuid4()}.docx"
+                    await asyncio.to_thread(
+                        _upload_document_to_s3,
+                        endpoint_url=settings.s3_endpoint_url,
+                        region=settings.s3_region,
+                        access_key=settings.s3_access_key,
+                        secret_key=settings.s3_secret_key,
+                        bucket=settings.s3_bucket_name,
+                        object_key=document_key,
+                        document_bytes=result.document_bytes,
+                    )
+                    job.document_s3_key = document_key
+                    # Use backend API download URL instead of internal MinIO presigned URL.
+                    # MinIO is not exposed externally; the backend proxies the download.
+                    job.document_url = f"{settings.api_base_url}/api/jobs/{job_id}/download"
+                    job.stage_message = f"Document ready ({len(result.document_bytes) // 1024} KB)"
 
-            await session.commit()
+                await session.commit()
 
-        logger.info("pipeline_worker_complete", job_id=job_id)
-        return f"Job {job_id} completed successfully"
+            logger.info("pipeline_worker_complete", job_id=job_id)
+            return f"Job {job_id} completed successfully"
+        finally:
+            if hasattr(llm, "aclose"):
+                await llm.aclose()
+            if vision_llm is not None and hasattr(vision_llm, "aclose"):
+                await vision_llm.aclose()
 
     except Exception as e:
         logger.error("pipeline_worker_failed", job_id=job_id, error=str(e))
@@ -272,7 +279,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             if job:
                 job.status = JobStatus.FAILED
                 job.error_message = str(e)[:2000]
-                job.updated_at = datetime.now(timezone.utc)
+                job.updated_at = datetime.now(UTC)
                 await session.commit()
 
         return f"Job {job_id} failed: {e}"
@@ -287,6 +294,24 @@ class WorkerSettings:
     @staticmethod
     async def on_startup(ctx: dict) -> None:
         logger.info("arq_worker_started")
+        cutoff = datetime.now(UTC) - timedelta(minutes=30)
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                sql_update(Job)
+                .where(Job.status == JobStatus.RUNNING, Job.updated_at < cutoff)
+                .values(
+                    status=JobStatus.FAILED,
+                    error_message="Pipeline interrupted: worker restart",
+                )
+                .returning(Job.id)
+            )
+            stale_ids = [row[0] for row in result.fetchall()]
+            await db.commit()
+
+        if stale_ids:
+            logger.warning("stale_jobs_cleaned_up", count=len(stale_ids), job_ids=stale_ids)
+        else:
+            logger.info("worker_startup_no_stale_jobs")
 
     @staticmethod
     async def on_shutdown(ctx: dict) -> None:

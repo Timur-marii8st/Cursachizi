@@ -349,6 +349,7 @@ class PipelineOrchestrator:
                         invalid_total=invalid_total,
                         registry_size=len(result.bibliography.entries),
                     )
+                total_words = sum(s.word_count for s in result.sections)
 
             # Stage 5: Format
             await callback.on_stage_start("formatting", "Форматируем документ...")
@@ -574,8 +575,16 @@ class PipelineOrchestrator:
                         conclusion=section, introduction=intro
                     )
                     if issues:
-                        logger.info(
-                            "conclusion_issues_found",
+                        # TODO: IntroductionConclusionValidator has no fix_conclusion method.
+                        # A fix_conclusion equivalent should be implemented mirroring
+                        # fix_introduction, and called here as:
+                        #   updated[i] = await self._intro_validator.fix_conclusion(
+                        #       section=section, issues=issues, topic=topic,
+                        #       discipline=discipline, outline=outline,
+                        #       model=config.writer_model,
+                        #   )
+                        logger.warning(
+                            "conclusion_issues_found_unfixed",
                             issues=issues,
                         )
 

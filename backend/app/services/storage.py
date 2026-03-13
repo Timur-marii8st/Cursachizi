@@ -1,5 +1,6 @@
 """S3-compatible object storage service."""
 
+import functools
 import io
 import logging
 
@@ -9,8 +10,9 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger(__name__)
 
 
+@functools.lru_cache(maxsize=4)
 def get_s3_client(endpoint_url: str, region: str, access_key: str, secret_key: str):
-    """Get a boto3 S3 client (cached per unique settings combination)."""
+    """Get a cached boto3 S3 client (one instance per unique settings combination)."""
     return boto3.client(
         "s3",
         endpoint_url=endpoint_url,

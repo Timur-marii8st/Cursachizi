@@ -82,7 +82,6 @@ class OpenRouterProvider(LLMProvider):
                 logger.error(
                     "openrouter_api_error",
                     status=response.status_code,
-                    body=response.text[:500],
                     model=used_model,
                 )
             response.raise_for_status()
