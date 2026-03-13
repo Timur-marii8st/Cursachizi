@@ -148,10 +148,7 @@ def _extract_bibliography_block(
             ref_start_idx = i
             break
         else:
-            if consecutive_refs >= 1:
-                break
-            else:
-                break
+            break
 
     if consecutive_refs == 0:
         return {}, text
@@ -299,7 +296,7 @@ def _find_best_match(
             best_num = entry.number
 
     # Only accept matches with some overlap
-    if best_score >= 0.05 and best_num is not None:
+    if best_score >= 0.15 and best_num is not None:
         return best_num
 
     return None
@@ -369,6 +366,16 @@ def _remap_citations(
         else:
             # No available numbers — cycle through all registry numbers
             complete_mapping[cited_num] = (cited_num % registry_size) + 1
+
+    # Log when all citations are identity-mapped (no bibliography block found)
+    identity_mapped = sum(1 for old, new in complete_mapping.items() if old == new)
+    if identity_mapped == len(complete_mapping) and len(complete_mapping) > 0 and not mapping:
+        logger.warning(
+            "citations_identity_mapped",
+            count=identity_mapped,
+            registry_size=registry_size,
+            hint="LLM did not generate bibliography block — citations point to sources by position",
+        )
 
     # Apply mapping
     remapped_count = 0

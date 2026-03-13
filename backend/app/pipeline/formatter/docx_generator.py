@@ -66,6 +66,13 @@ class DocxGenerator:
         # Citation fixing is done by the orchestrator (fix_citations) before
         # reaching the generator. Here we only handle the legacy path when no
         # bibliography registry is provided (e.g. direct generator usage).
+        logger.info(
+            "docx_generate_start",
+            has_bibliography=bibliography is not None,
+            bibliography_entries=len(bibliography.entries) if bibliography else 0,
+            sections_count=len(sections),
+            sources_count=len(sources),
+        )
         if not (bibliography and bibliography.entries):
             ref_result = extract_and_renumber_references(sections)
             sections = ref_result.sections
@@ -389,6 +396,13 @@ class DocxGenerator:
         available. Falls back to formatting raw Source objects.
         """
         self._add_heading(doc, "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ", level=1, numbered=False)
+
+        logger.info(
+            "adding_bibliography",
+            has_registry=bibliography is not None,
+            registry_entries=len(bibliography.entries) if bibliography else 0,
+            fallback_sources=len(sources),
+        )
 
         # Prefer bibliography registry (real, verified sources)
         if bibliography and bibliography.entries:

@@ -164,6 +164,14 @@ class PipelineOrchestrator:
             result.bibliography = BibliographyRegistry.from_sources(
                 result.research.sources
             )
+            if len(result.research.sources) == 0:
+                logger.error("research_returned_no_sources", topic=topic[:80])
+            elif len(result.research.sources) < 3:
+                logger.warning(
+                    "research_few_sources",
+                    count=len(result.research.sources),
+                    topic=topic[:80],
+                )
 
             await callback.on_stage_complete(
                 "researching",
@@ -344,6 +352,13 @@ class PipelineOrchestrator:
 
             # Stage 5: Format
             await callback.on_stage_start("formatting", "Форматируем документ...")
+            logger.info(
+                "pre_format_check",
+                has_bibliography=result.bibliography is not None,
+                bibliography_entries=len(result.bibliography.entries) if result.bibliography else 0,
+                sections_count=len(result.sections),
+                sources_count=len(result.research.sources),
+            )
             if is_article:
                 result.document_bytes = self._article_docx_generator.generate(
                     outline=result.outline,

@@ -52,6 +52,11 @@ class ArticleDocxGenerator:
         bibliography: BibliographyRegistry | None = None,
     ) -> bytes:
         """Generate a complete article .docx document."""
+        logger.info(
+            "article_docx_generate_start",
+            has_bibliography=bibliography is not None,
+            bibliography_entries=len(bibliography.entries) if bibliography else 0,
+        )
         # Citation fixing is done by the orchestrator before reaching the generator.
         # Legacy fallback when no bibliography registry is provided.
         collected_bibliography: list[str] | None = None

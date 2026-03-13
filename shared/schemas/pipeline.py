@@ -75,10 +75,18 @@ class BibliographyRegistry(BaseModel):
 
     @classmethod
     def from_sources(cls, sources: list["Source"]) -> "BibliographyRegistry":
-        """Build a registry from research sources."""
+        """Build a registry from research sources, deduplicating by URL."""
+        seen_urls: set[str] = set()
+        unique_sources: list[Source] = []
+        for source in sources:
+            if source.url and source.url in seen_urls:
+                continue
+            if source.url:
+                seen_urls.add(source.url)
+            unique_sources.append(source)
+
         entries = []
-        for i, source in enumerate(sources, 1):
-            # Format as ГОСТ-style electronic resource
+        for i, source in enumerate(unique_sources, 1):
             ref = source.title
             if source.url:
                 ref += f" [Электронный ресурс]. — URL: {source.url}"
@@ -114,12 +122,18 @@ class BibliographyRegistry(BaseModel):
         if not self.entries:
             return "Источники не предоставлены."
         lines = []
-        source_map = {s.url: s for s in sources}
+        content_count = 0
         for entry in self.entries:
-            source = source_map.get(entry.url)
-            if source and len(lines) < max_content_entries:
+            # Match by position: entry.number is 1-based index into original sources list
+            source_idx = entry.number - 1
+            source = sources[source_idx] if 0 <= source_idx < len(sources) else None
+            if source and content_count < max_content_entries:
                 text = source.full_text[:1500] if source.full_text else source.snippet
-                lines.append(f"[{entry.number}] {entry.title}\n{text}\n")
+                if text:
+                    lines.append(f"[{entry.number}] {entry.title}\n{text}\n")
+                    content_count += 1
+                else:
+                    lines.append(f"[{entry.number}] {entry.title}")
             else:
                 lines.append(f"[{entry.number}] {entry.title}")
         return "\n".join(lines)

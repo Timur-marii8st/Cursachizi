@@ -440,3 +440,146 @@ class TestCitationFixer:
 
         result = fix_citations(sections, registry)
         assert "[1]" in result[0].content
+
+
+class TestFullPipelineFlow:
+    """End-to-end tests simulating the orchestrator → fix_citations → docx_generator flow."""
+
+    def test_full_flow_bibliography_appears_in_docx(self):
+        """Simulate complete pipeline: build registry → fix citations → generate docx.
+
+        This is the exact flow that the orchestrator follows:
+        1. Build BibliographyRegistry from research sources
+        2. Write sections (LLM output with fake bibliography blocks)
+        3. fix_citations() strips fake blocks and remaps citations
+        4. DocxGenerator.generate() receives fixed sections + registry
+        5. Bibliography section in DOCX should contain REAL sources
+        """
+        from backend.app.pipeline.writer.citation_fixer import fix_citations
+
+        # Real research sources
+        sources = [
+            Source(url="https://example.com/article1", title="Иванов И.И. Цифровая трансформация"),
+            Source(url="https://example.com/article2", title="Петров П.П. Управление персоналом"),
+            Source(url="https://example.com/article3", title="Smith J. Digital HR Management"),
+        ]
+        registry = BibliographyRegistry.from_sources(sources)
+
+        # LLM output with fake bibliography blocks (simulating real LLM behavior)
+        sections = [
+            SectionContent(
+                chapter_number=0,
+                section_title="Введение",
+                content="Актуальность темы подтверждается исследованиями [1] и [2].",
+                word_count=8,
+            ),
+            SectionContent(
+                chapter_number=1,
+                section_title="1.1 Теоретические основы",
+                content=(
+                    "Согласно исследованиям [1], цифровизация меняет подходы к управлению [2]. "
+                    "Многие авторы [3] отмечают значимость этих изменений.\n\n"
+                    "Библиографические ссылки:\n"
+                    "[1] Козлов А.А. Менеджмент в эпоху цифровизации. — М.: Наука, 2023.\n"
+                    "[2] Brown T. HR Technology Trends. — NY: Wiley, 2022.\n"
+                    "[3] Сидорова М.В. Кадровый потенциал. — СПб.: Питер, 2024."
+                ),
+                word_count=30,
+            ),
+            SectionContent(
+                chapter_number=99,
+                section_title="Заключение",
+                content="В заключение отметим важность цифровизации.",
+                word_count=7,
+            ),
+        ]
+
+        outline = Outline(
+            title="Цифровизация управления персоналом",
+            chapters=[
+                OutlineChapter(
+                    number=1,
+                    title="Теоретические основы",
+                    subsections=["1.1 Теоретические основы"],
+                ),
+            ],
+        )
+
+        # Step 1: fix_citations (as orchestrator does in stage 4c)
+        fixed_sections = fix_citations(sections, registry)
+
+        # Verify fake block was stripped
+        for s in fixed_sections:
+            assert "Козлов А.А." not in s.content
+            assert "Brown T." not in s.content
+            assert "Библиографические ссылки" not in s.content
+
+        # Step 2: generate docx (as orchestrator does in stage 5)
+        generator = DocxGenerator()
+        doc_bytes = generator.generate(
+            outline=outline,
+            sections=fixed_sections,
+            sources=sources,
+            bibliography=registry,
+        )
+
+        # Step 3: verify bibliography appears in output
+        doc = Document(io.BytesIO(doc_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+
+        # Bibliography section must exist and contain REAL sources
+        assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" in full_text
+        bib_start = full_text.find("СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ")
+        bib_text = full_text[bib_start:]
+
+        # All 3 real sources must be in bibliography
+        assert "Иванов И.И. Цифровая трансформация" in bib_text
+        assert "Петров П.П. Управление персоналом" in bib_text
+        assert "Smith J. Digital HR Management" in bib_text
+        assert "[Электронный ресурс]" in bib_text
+
+        # Fake sources must NOT be in bibliography
+        assert "Козлов А.А." not in bib_text
+        assert "Brown T. HR Technology" not in bib_text
+
+    def test_full_flow_no_registry_fallback(self):
+        """When no registry is provided, legacy extraction should work."""
+        sources = [
+            Source(url="https://example.com/1", title="Source One"),
+        ]
+
+        sections = [
+            SectionContent(
+                chapter_number=0,
+                section_title="Введение",
+                content="Text with [1] citation.\n\n[1] Some reference. — M., 2023.",
+                word_count=8,
+            ),
+            SectionContent(
+                chapter_number=99,
+                section_title="Заключение",
+                content="Conclusion text.",
+                word_count=3,
+            ),
+        ]
+
+        outline = Outline(
+            title="Test",
+            chapters=[],
+        )
+
+        # No registry — legacy path
+        generator = DocxGenerator()
+        doc_bytes = generator.generate(
+            outline=outline,
+            sections=sections,
+            sources=sources,
+            bibliography=None,
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" in full_text
+        # Fallback uses raw sources
+        assert "Source One" in full_text
