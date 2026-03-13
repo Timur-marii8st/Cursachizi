@@ -6,7 +6,6 @@ from shared.schemas.payment import (
     CREDIT_PACKAGES,
     PACKAGES_BY_ID,
     BalanceResponse,
-    CreditPackage,
     PaymentCreate,
     PaymentStatus,
 )

@@ -1,8 +1,7 @@
 """Tests for BibliographyRegistry — unified bibliography from real sources."""
 
-import pytest
 
-from shared.schemas.pipeline import BibliographyEntry, BibliographyRegistry, Source
+from shared.schemas.pipeline import BibliographyRegistry, Source
 
 
 def _make_sources(n: int = 5) -> list[Source]:
