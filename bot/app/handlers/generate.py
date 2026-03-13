@@ -48,8 +48,12 @@ async def cmd_generate(message: Message, state: FSMContext) -> None:
 @router.callback_query(GenerateForm.waiting_work_type, F.data.startswith("worktype:"))
 async def process_work_type(callback: CallbackQuery, state: FSMContext) -> None:
     """Receive work type selection."""
-    raw = callback.data.split(":")[1]
-    work_type = WorkType(raw)
+    parts = callback.data.split(":", 1)
+    try:
+        work_type = WorkType(parts[1] if len(parts) > 1 else "")
+    except ValueError:
+        await callback.answer("Неверный выбор. Попробуйте снова.")
+        return
     label = _WORK_TYPE_LABELS[work_type]
 
     await state.update_data(work_type=work_type.value)
@@ -114,7 +118,12 @@ async def process_university(message: Message, state: FSMContext) -> None:
 @router.callback_query(GenerateForm.waiting_page_count, F.data.startswith("pages:"))
 async def process_page_count(callback: CallbackQuery, state: FSMContext) -> None:
     """Receive page count from inline keyboard."""
-    page_count = int(callback.data.split(":")[1])
+    parts = callback.data.split(":", 1)
+    try:
+        page_count = int(parts[1] if len(parts) > 1 else "")
+    except ValueError:
+        await callback.answer("Неверное количество страниц. Попробуйте снова.")
+        return
     await state.update_data(page_count=page_count)
     await state.set_state(GenerateForm.waiting_instructions)
     await callback.message.edit_text(f"Количество страниц: {page_count}")
