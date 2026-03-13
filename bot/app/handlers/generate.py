@@ -1,4 +1,4 @@
-"""Coursework generation flow handlers using FSM (Finite State Machine)."""
+"""Coursework and article generation flow handlers using FSM (Finite State Machine)."""
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -9,16 +9,23 @@ from aiogram.types import CallbackQuery, Message
 from bot.app.keyboards.inline import (
     get_confirm_keyboard,
     get_page_count_keyboard,
+    get_work_type_keyboard,
 )
 from bot.app.services.api_client import CourseForgeAPIClient
-from shared.schemas.job import JobCreate
+from shared.schemas.job import JobCreate, WorkType
 
 router = Router()
+
+_WORK_TYPE_LABELS = {
+    WorkType.COURSEWORK: "Курсовая работа",
+    WorkType.ARTICLE: "Научная статья",
+}
 
 
 class GenerateForm(StatesGroup):
     """FSM states for the generation flow."""
 
+    waiting_work_type = State()
     waiting_topic = State()
     waiting_discipline = State()
     waiting_university = State()
@@ -29,13 +36,33 @@ class GenerateForm(StatesGroup):
 
 @router.message(Command("generate"))
 async def cmd_generate(message: Message, state: FSMContext) -> None:
-    """Start the generation flow."""
+    """Start the generation flow by asking for work type."""
     await state.clear()
-    await state.set_state(GenerateForm.waiting_topic)
+    await state.set_state(GenerateForm.waiting_work_type)
     await message.answer(
-        "Введите тему курсовой работы:\n\n"
-        "Например: «Влияние цифровизации на управление персоналом "
-        "в российских компаниях»"
+        "Выберите тип работы:",
+        reply_markup=get_work_type_keyboard(),
+    )
+
+
+@router.callback_query(GenerateForm.waiting_work_type, F.data.startswith("worktype:"))
+async def process_work_type(callback: CallbackQuery, state: FSMContext) -> None:
+    """Receive work type selection."""
+    raw = callback.data.split(":")[1]
+    work_type = WorkType(raw)
+    label = _WORK_TYPE_LABELS[work_type]
+
+    await state.update_data(work_type=work_type.value)
+    await state.set_state(GenerateForm.waiting_topic)
+    await callback.message.edit_text(f"Тип работы: {label}")
+
+    topic_hint = (
+        "«Влияние цифровизации на управление персоналом в российских компаниях»"
+        if work_type == WorkType.COURSEWORK
+        else "«Методы машинного обучения в задачах классификации текста»"
+    )
+    await callback.message.answer(
+        f"Введите тему {label.lower()}:\n\nНапример: {topic_hint}"
     )
 
 
@@ -73,10 +100,14 @@ async def process_university(message: Message, state: FSMContext) -> None:
     text = message.text or ""
     university = "" if text.strip() == "-" else text.strip()
     await state.update_data(university=university)
+
+    data = await state.get_data()
+    work_type = WorkType(data.get("work_type", WorkType.COURSEWORK.value))
+
     await state.set_state(GenerateForm.waiting_page_count)
     await message.answer(
         "Выберите количество страниц:",
-        reply_markup=get_page_count_keyboard(),
+        reply_markup=get_page_count_keyboard(work_type),
     )
 
 
@@ -103,8 +134,12 @@ async def process_instructions(message: Message, state: FSMContext) -> None:
 
     # Show confirmation
     data = await state.get_data()
+    work_type = WorkType(data.get("work_type", WorkType.COURSEWORK.value))
+    work_label = _WORK_TYPE_LABELS[work_type]
+
     summary = (
         f"📋 Подтвердите параметры:\n\n"
+        f"🗂 Тип работы: {work_label}\n"
         f"📝 Тема: {data['topic']}\n"
         f"📚 Дисциплина: {data.get('discipline') or 'не указана'}\n"
         f"🏫 Университет: {data.get('university') or 'не указан'}\n"
@@ -126,11 +161,17 @@ async def process_confirm(
     data = await state.get_data()
     await state.clear()
 
+    work_type = WorkType(data.get("work_type", WorkType.COURSEWORK.value))
+    work_label = _WORK_TYPE_LABELS[work_type]
+
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("Запускаю генерацию... Это займёт 5-15 минут.")
+    await callback.message.answer(
+        f"Запускаю генерацию {work_label.lower()}... Это займёт 5-15 минут."
+    )
 
     try:
         job_create = JobCreate(
+            work_type=work_type,
             topic=data["topic"],
             discipline=data.get("discipline", ""),
             university=data.get("university", ""),
