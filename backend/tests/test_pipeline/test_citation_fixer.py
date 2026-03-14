@@ -1,6 +1,5 @@
 """Tests for citation_fixer — remapping LLM citations to real registry entries."""
 
-import pytest
 
 from backend.app.pipeline.writer.citation_fixer import (
     _build_citation_mapping,
@@ -11,7 +10,7 @@ from backend.app.pipeline.writer.citation_fixer import (
     _strip_section_heading,
     fix_citations,
 )
-from shared.schemas.pipeline import BibliographyEntry, BibliographyRegistry, SectionContent, Source
+from shared.schemas.pipeline import BibliographyRegistry, SectionContent, Source
 
 
 def _make_registry(n: int = 5) -> BibliographyRegistry:

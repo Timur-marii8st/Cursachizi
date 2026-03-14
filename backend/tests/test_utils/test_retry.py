@@ -1,8 +1,7 @@
 """Tests for HTTP retry utility (TEST-005)."""
 
-import pytest
 import httpx
-import respx
+import pytest
 
 from backend.app.utils.retry import with_http_retry
 

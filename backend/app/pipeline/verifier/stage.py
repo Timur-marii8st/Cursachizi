@@ -7,6 +7,8 @@ from backend.app.pipeline.research.searcher import SearchProvider
 from backend.app.pipeline.verifier.claim_extractor import ClaimExtractor
 from backend.app.pipeline.verifier.fact_checker import FactChecker
 from shared.schemas.pipeline import (
+    CHAPTER_CONCLUSION,
+    CHAPTER_INTRO,
     ClaimVerdict,
     FactCheckResult,
     PipelineConfig,
@@ -51,7 +53,7 @@ class VerifierStage:
         all_claims = []
         for section in sections:
             # Skip intro/conclusion from fact-checking
-            if section.section_title in ("Введение", "Заключение"):
+            if section.chapter_number in (CHAPTER_INTRO, CHAPTER_CONCLUSION):
                 continue
 
             claims = await self._claim_extractor.extract(

@@ -2,8 +2,6 @@
 
 import hashlib
 
-import pytest
-
 from backend.app.services.robokassa import (
     _signature,
     generate_payment_link,
@@ -15,7 +13,7 @@ from backend.app.services.robokassa import (
 class TestSignature:
     def test_basic(self):
         result = _signature("login", 100, 1, "password")
-        expected = hashlib.md5("login:100:1:password".encode()).hexdigest()
+        expected = hashlib.md5(b"login:100:1:password").hexdigest()
         assert result == expected
 
     def test_consistent(self):

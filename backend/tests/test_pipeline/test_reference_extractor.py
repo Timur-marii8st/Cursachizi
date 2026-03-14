@@ -1,9 +1,7 @@
 """Tests for reference extraction and renumbering."""
 
-import pytest
 
 from backend.app.pipeline.formatter.reference_extractor import (
-    RenumberingResult,
     _find_duplicate,
     _normalize_ref,
     _renumber_citations,

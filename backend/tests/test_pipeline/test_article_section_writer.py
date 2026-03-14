@@ -2,8 +2,6 @@
 
 from unittest.mock import AsyncMock
 
-import pytest
-
 from backend.app.pipeline.writer.article_section_writer import ArticleSectionWriter
 from shared.schemas.pipeline import Outline, OutlineChapter, SectionContent, Source
 
