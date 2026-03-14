@@ -45,6 +45,28 @@ REQUIRED_INTRO_ELEMENTS = {
     ],
 }
 
+CONCLUSION_FIX_PROMPT = """Ты — опытный автор научных работ на русском языке. Доработай заключение курсовой работы, устранив выявленные недостатки.
+
+ТЕМА: {topic}
+ДИСЦИПЛИНА: {discipline}
+
+ТЕКУЩЕЕ ЗАКЛЮЧЕНИЕ:
+{current_text}
+
+ВЫЯВЛЕННЫЕ ПРОБЛЕМЫ:
+{issues}
+
+СТРУКТУРА РАБОТЫ:
+{outline_summary}
+
+ТРЕБОВАНИЯ:
+1. Устрани ТОЛЬКО указанные проблемы, органично встроив новые фрагменты в текст
+2. Сохрани существующий текст максимально без изменений
+3. Академический стиль (третье лицо, безличные конструкции)
+4. Каждый новый блок — отдельный абзац
+
+Напиши ТОЛЬКО полный текст заключения с исправленными недостатками."""
+
 INTRO_FIX_PROMPT = """Ты — опытный автор научных работ на русском языке. Дополни введение курсовой работы недостающими элементами.
 
 ТЕМА: {topic}
@@ -186,3 +208,69 @@ class IntroductionConclusionValidator:
             logger.info("conclusion_issues", issues=issues)
 
         return issues
+
+    async def fix_conclusion(
+        self,
+        section: SectionContent,
+        issues: list[str],
+        topic: str,
+        discipline: str,
+        outline: Outline,
+        model: str | None = None,
+    ) -> SectionContent:
+        """Regenerate conclusion to fix detected structural issues."""
+        if not issues:
+            return section
+
+        issue_descriptions = {
+            "Отсутствуют формулировки выводов": (
+                "Добавь явные выводы по каждой главе работы (ключевое слово «вывод» или «результат»)"
+            ),
+            "Не указана практическая значимость результатов": (
+                "Добавь абзац о практической значимости полученных результатов"
+            ),
+            "Не обозначены направления дальнейших исследований": (
+                "Добавь абзац о перспективах и направлениях дальнейших исследований"
+            ),
+        }
+
+        issues_text = "\n".join(
+            f"- {issue_descriptions.get(issue, issue)}"
+            for issue in issues
+        )
+
+        outline_summary = "\n".join(
+            f"Глава {ch.number}: {ch.title}" for ch in outline.chapters
+        )
+
+        response = await self._llm.generate(
+            messages=[LLMMessage(role="user", content=CONCLUSION_FIX_PROMPT.format(
+                topic=topic,
+                discipline=discipline or "не указана",
+                current_text=section.content,
+                issues=issues_text,
+                outline_summary=outline_summary,
+            ))],
+            model=model,
+            temperature=0.5,
+            max_tokens=3000,
+        )
+
+        fixed_content = response.content.strip()
+        if not fixed_content:
+            return section
+
+        logger.info(
+            "conclusion_fixed",
+            fixed_issues=issues,
+            old_words=section.word_count,
+            new_words=len(fixed_content.split()),
+        )
+
+        return SectionContent(
+            chapter_number=99,
+            section_title="Заключение",
+            content=fixed_content,
+            citations=section.citations,
+            word_count=len(fixed_content.split()),
+        )

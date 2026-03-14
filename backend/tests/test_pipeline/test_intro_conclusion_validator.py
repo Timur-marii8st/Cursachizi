@@ -199,3 +199,72 @@ class TestConclusionValidator:
         validator = IntroductionConclusionValidator(llm=mock_llm)
         issues = validator.check_conclusion(section, complete_intro)
         assert issues == []
+
+    async def test_fix_conclusion(
+        self,
+        mock_llm: MockLLMProvider,
+        poor_conclusion: SectionContent,
+        complete_intro: SectionContent,
+        outline: Outline,
+    ) -> None:
+        fixed_text = (
+            "В ходе исследования получены следующие выводы и результаты работы. "
+            "Практическая значимость работы состоит в применимости рекомендаций. "
+            "Дальнейшие перспективы исследований связаны с расширением анализа."
+        )
+        mock_llm.set_responses([fixed_text])
+        validator = IntroductionConclusionValidator(llm=mock_llm)
+
+        issues = validator.check_conclusion(poor_conclusion, complete_intro)
+        result = await validator.fix_conclusion(
+            section=poor_conclusion,
+            issues=issues,
+            topic="Цифровизация",
+            discipline="Менеджмент",
+            outline=outline,
+        )
+
+        assert result.chapter_number == 99
+        assert result.section_title == "Заключение"
+        assert result.word_count > poor_conclusion.word_count
+        assert len(mock_llm.calls) == 1
+
+    async def test_fix_no_issues_returns_original(
+        self,
+        mock_llm: MockLLMProvider,
+        good_conclusion: SectionContent,
+        complete_intro: SectionContent,
+        outline: Outline,
+    ) -> None:
+        validator = IntroductionConclusionValidator(llm=mock_llm)
+
+        result = await validator.fix_conclusion(
+            section=good_conclusion,
+            issues=[],
+            topic="Тема",
+            discipline="",
+            outline=outline,
+        )
+
+        assert result.content == good_conclusion.content
+        assert len(mock_llm.calls) == 0
+
+    async def test_fix_conclusion_empty_llm_response_returns_original(
+        self,
+        mock_llm: MockLLMProvider,
+        poor_conclusion: SectionContent,
+        complete_intro: SectionContent,
+        outline: Outline,
+    ) -> None:
+        mock_llm.set_responses([""])
+        validator = IntroductionConclusionValidator(llm=mock_llm)
+
+        result = await validator.fix_conclusion(
+            section=poor_conclusion,
+            issues=["Отсутствуют формулировки выводов"],
+            topic="Тема",
+            discipline="Менеджмент",
+            outline=outline,
+        )
+
+        assert result.content == poor_conclusion.content

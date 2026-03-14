@@ -575,17 +575,17 @@ class PipelineOrchestrator:
                         conclusion=section, introduction=intro
                     )
                     if issues:
-                        # TODO: IntroductionConclusionValidator has no fix_conclusion method.
-                        # A fix_conclusion equivalent should be implemented mirroring
-                        # fix_introduction, and called here as:
-                        #   updated[i] = await self._intro_validator.fix_conclusion(
-                        #       section=section, issues=issues, topic=topic,
-                        #       discipline=discipline, outline=outline,
-                        #       model=config.writer_model,
-                        #   )
-                        logger.warning(
-                            "conclusion_issues_found_unfixed",
+                        await callback.on_stage_progress(
+                            "writing", 97,
+                            f"Заключение: исправляем {len(issues)} проблем",
+                        )
+                        updated[i] = await self._intro_validator.fix_conclusion(
+                            section=section,
                             issues=issues,
+                            topic=topic,
+                            discipline=discipline,
+                            outline=outline,
+                            model=config.writer_model,
                         )
 
         return updated
