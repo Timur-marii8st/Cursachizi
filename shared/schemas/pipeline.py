@@ -2,7 +2,19 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, BeforeValidator, Field
+
+
+def _coerce_int(v: object) -> int:
+    """Round floats to int — LLM sometimes returns 1.2 instead of 1."""
+    if isinstance(v, float):
+        return round(v)
+    return v  # type: ignore[return-value]
+
+
+CoercedInt = Annotated[int, BeforeValidator(_coerce_int)]
 
 CHAPTER_INTRO: int = 0
 CHAPTER_CONCLUSION: int = 99
@@ -37,7 +49,7 @@ class OutlineChapter(BaseModel):
     title: str
     subsections: list[str] = Field(default_factory=list)
     description: str = ""
-    estimated_pages: int = 3
+    estimated_pages: CoercedInt = 3
 
 
 class Outline(BaseModel):
