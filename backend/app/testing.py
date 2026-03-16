@@ -17,6 +17,10 @@ class MockLLMProvider(LLMProvider):
         self._responses = responses
         self._call_index = 0
 
+    def set_response(self, response: str) -> None:
+        """Convenience alias: set a single response (documented in CLAUDE.md)."""
+        self.set_responses([response])
+
     async def generate(
         self,
         messages: list[LLMMessage],

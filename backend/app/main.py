@@ -78,11 +78,11 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
-    # CORS
+    # CORS — REFACT-006: don't combine allow_origins=["*"] with allow_credentials=True
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if settings.debug else [],
-        allow_credentials=True,
+        allow_credentials=not settings.debug,  # credentials only with explicit origins
         allow_methods=["*"],
         allow_headers=["*"],
     )
