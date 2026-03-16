@@ -7,13 +7,13 @@ Used by LLM and search providers to handle transient failures:
 """
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 import httpx
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 T = TypeVar("T")
 
@@ -66,12 +66,10 @@ async def with_http_retry(
 
             logger.warning(
                 "http_retry",
-                extra={
-                    "attempt": attempt + 1,
-                    "max_attempts": max_attempts,
-                    "status": exc.response.status_code,
-                    "delay": delay,
-                },
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
+                status=exc.response.status_code,
+                delay=delay,
             )
 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
@@ -79,12 +77,10 @@ async def with_http_retry(
             delay = min(base_delay * (2**attempt), max_delay)
             logger.warning(
                 "http_retry_network",
-                extra={
-                    "attempt": attempt + 1,
-                    "max_attempts": max_attempts,
-                    "error": str(exc),
-                    "delay": delay,
-                },
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
+                error=str(exc),
+                delay=delay,
             )
 
         if attempt < max_attempts - 1:

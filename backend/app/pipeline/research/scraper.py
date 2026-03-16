@@ -15,11 +15,13 @@ logger = structlog.get_logger()
 _ALLOWED_SCHEMES = {"http", "https"}
 
 
-def _is_safe_url(url: str) -> bool:
+async def _is_safe_url(url: str) -> bool:
     """Return False for URLs that resolve to private/internal IP ranges (SSRF protection).
 
     Blocks: loopback (127.x, ::1), RFC-1918 private ranges, link-local (169.254.x),
     and any URL with a non-http/https scheme.
+
+    FIX-003: DNS resolution is run via asyncio.to_thread to avoid blocking the event loop.
     """
     try:
         parsed = httpx.URL(url)
@@ -28,8 +30,8 @@ def _is_safe_url(url: str) -> bool:
         hostname = parsed.host
         if not hostname:
             return False
-        # Resolve all A/AAAA records and check each one
-        addr_infos = socket.getaddrinfo(hostname, None)
+        # Resolve all A/AAAA records — run in thread to avoid blocking event loop
+        addr_infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
         for addr_info in addr_infos:
             ip = ipaddress.ip_address(addr_info[4][0])
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
@@ -71,7 +73,7 @@ class WebScraper:
         """Scrape a single source URL and update its full_text."""
         async with self._semaphore:
             # SEC-001: SSRF protection — skip internal/private URLs
-            if not _is_safe_url(source.url):
+            if not await _is_safe_url(source.url):
                 logger.warning("ssrf_blocked", url=source.url[:80])
                 return
 

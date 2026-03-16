@@ -62,15 +62,15 @@ class TestWebScraper:
 
     async def test_ssrf_blocked_non_http_scheme(self, scraper: WebScraper) -> None:
         """SSRF: non-HTTP schemes must be blocked."""
-        assert _is_safe_url("file:///etc/passwd") is False
-        assert _is_safe_url("ftp://example.com/file") is False
+        assert await _is_safe_url("file:///etc/passwd") is False
+        assert await _is_safe_url("ftp://example.com/file") is False
 
     async def test_ssrf_allows_public_url(self) -> None:
         """SSRF: public internet URLs must pass the check."""
-        assert _is_safe_url("https://google.com") is True
-        assert _is_safe_url("http://example.com/page") is True
+        assert await _is_safe_url("https://google.com") is True
+        assert await _is_safe_url("http://example.com/page") is True
 
     async def test_ssrf_is_safe_url_invalid_input(self) -> None:
         """SSRF: malformed URLs return False without raising."""
-        assert _is_safe_url("not-a-url") is False
-        assert _is_safe_url("") is False
+        assert await _is_safe_url("not-a-url") is False
+        assert await _is_safe_url("") is False

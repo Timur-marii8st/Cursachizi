@@ -447,6 +447,9 @@ class PipelineOrchestrator:
                 )
 
             result.completed_at = datetime.now(UTC)
+            # FIX-001: always recalculate total_words before final log to avoid
+            # UnboundLocalError when optional blocks (rewrite, humanizer, citations) are skipped.
+            total_words = sum(s.word_count for s in result.sections)
             logger.info(
                 "pipeline_complete",
                 topic=topic[:80],
