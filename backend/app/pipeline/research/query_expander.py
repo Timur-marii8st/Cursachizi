@@ -50,9 +50,12 @@ class QueryExpander:
         Returns:
             List of search query strings.
         """
+        # FIX-007: escape braces in user-provided strings to prevent KeyError
+        safe_topic = topic.replace("{", "{{").replace("}", "}}")
+        safe_discipline = (discipline or "не указана").replace("{", "{{").replace("}", "}}")
         prompt = QUERY_EXPANSION_PROMPT.format(
-            topic=topic,
-            discipline=discipline or "не указана",
+            topic=safe_topic,
+            discipline=safe_discipline,
             count=count,
         )
 

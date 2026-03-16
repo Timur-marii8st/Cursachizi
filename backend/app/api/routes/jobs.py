@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from urllib.parse import quote
 from uuid import uuid4
 
 from arq.connections import ArqRedis
@@ -16,8 +17,10 @@ from backend.app.api.deps import (
     get_db,
     verify_internal_api_key,
 )
+from backend.app.config import get_settings
 from backend.app.models.job import Job
 from backend.app.models.user import User
+from backend.app.services.storage import download_document, upload_document
 from backend.app.services.user_service import get_or_create_user_by_telegram_id
 from shared.schemas.job import (
     JobCreate,
@@ -89,9 +92,8 @@ async def create_job(
     else:
         user = await _get_or_create_default_user(db)
 
-    from backend.app.config import get_settings as _get_settings
-    _settings = _get_settings()
-    is_admin = job_in.telegram_id and job_in.telegram_id in _settings.admin_telegram_id_set
+    settings = get_settings()
+    is_admin = job_in.telegram_id and job_in.telegram_id in settings.admin_telegram_id_set
 
     if is_admin:
         # Admins have unlimited credits — only track total_papers_generated
@@ -156,17 +158,19 @@ async def get_job(
 
 @router.get("", response_model=list[JobResponse])
 async def list_jobs(
+    telegram_id: int | None = None,
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ) -> list[JobResponse]:
-    """List all jobs (for current user)."""
-    query = (
-        select(Job)
-        .order_by(Job.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    """List jobs, optionally filtered by telegram_id.
+
+    FIX-004: Without telegram_id filter, all users' jobs were exposed.
+    """
+    query = select(Job).order_by(Job.created_at.desc())
+    if telegram_id is not None:
+        query = query.join(User).where(User.telegram_id == telegram_id)
+    query = query.limit(limit).offset(offset)
     result = await db.execute(query)
     jobs = result.scalars().all()
     return [_job_to_response(j) for j in jobs]
@@ -177,7 +181,10 @@ async def cancel_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> JobResponse:
-    """Cancel a pending or running job."""
+    """Cancel a pending or running job.
+
+    FIX-005: Refunds 1 credit when cancelling a PENDING job (work not yet started).
+    """
     job = await db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -186,6 +193,15 @@ async def cancel_job(
             status_code=400,
             detail=f"Cannot cancel job in status: {job.status}",
         )
+
+    # Refund credit for PENDING jobs — pipeline hasn't consumed LLM tokens yet
+    if job.status == JobStatus.PENDING:
+        await db.execute(
+            sql_update(User)
+            .where(User.id == job.user_id)
+            .values(credits_remaining=User.credits_remaining + 1)
+        )
+
     job.status = JobStatus.CANCELLED
     job.updated_at = datetime.now(UTC)
     await db.flush()
@@ -207,9 +223,6 @@ async def download_job_document(
     if not job.document_s3_key:
         raise HTTPException(status_code=404, detail="Document not found in storage")
 
-    from backend.app.config import get_settings
-    from backend.app.services.storage import download_document
-
     settings = get_settings()
     try:
         doc_bytes = await asyncio.to_thread(
@@ -223,8 +236,6 @@ async def download_job_document(
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Failed to retrieve document from storage") from exc
-
-    from urllib.parse import quote
 
     safe_topic = job.topic[:50].replace("/", "_").replace("\\", "_")
     filename_utf8 = f"courseforge_{safe_topic}.docx"
@@ -273,16 +284,11 @@ async def upload_reference_template(
         raise HTTPException(status_code=400, detail="Invalid .docx file: not a valid ZIP archive")
 
     # Upload to S3
-    import asyncio
-
-    from backend.app.config import get_settings
-    from backend.app.services.storage import upload_document as _upload_document
-
     settings = get_settings()
     ref_key = f"references/{job_id}/{uuid4()}.docx"
 
     await asyncio.to_thread(
-        _upload_document,
+        upload_document,
         endpoint_url=settings.s3_endpoint_url,
         region=settings.s3_region,
         access_key=settings.s3_access_key,

@@ -16,10 +16,7 @@ from backend.app.services.robokassa import (
     generate_payment_link,
     verify_result_signature,
 )
-from backend.app.services.user_service import (
-    get_or_create_user_by_telegram_id,
-    get_user_by_telegram_id,
-)
+from backend.app.services.user_service import get_or_create_user_by_telegram_id
 from shared.schemas.payment import (
     PACKAGES_BY_ID,
     BalanceResponse,
@@ -190,15 +187,12 @@ async def get_balance(
     telegram_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
 ) -> BalanceResponse:
-    """Get user's credit balance by Telegram ID."""
-    user = await get_user_by_telegram_id(db, telegram_id)
-    if not user:
-        # New user — return default trial balance
-        return BalanceResponse(
-            telegram_id=telegram_id,
-            credits_remaining=1,
-            total_papers_generated=0,
-        )
+    """Get user's credit balance by Telegram ID.
+
+    REFACT-004: Creates the user if not found, so the returned balance
+    always reflects real DB state (1 trial credit for new users).
+    """
+    user = await get_or_create_user_by_telegram_id(db, telegram_id)
     return BalanceResponse(
         telegram_id=telegram_id,
         credits_remaining=user.credits_remaining,

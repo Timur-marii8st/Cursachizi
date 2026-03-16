@@ -1,13 +1,17 @@
-"""S3-compatible object storage service."""
+"""S3-compatible object storage service.
+
+ARCH-002: Single source of truth for all S3 operations (upload, download, bucket creation).
+"""
 
 import functools
 import io
-import logging
 
 import boto3
+import structlog
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 @functools.lru_cache(maxsize=4)
@@ -19,7 +23,27 @@ def get_s3_client(endpoint_url: str, region: str, access_key: str, secret_key: s
         region_name=region,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
+        config=Config(
+            s3={"addressing_style": "path"},
+            proxies={},  # bypass system proxy for local MinIO
+        ),
     )
+
+
+def ensure_bucket(
+    endpoint_url: str,
+    region: str,
+    access_key: str,
+    secret_key: str,
+    bucket: str,
+) -> None:
+    """Ensure the S3 bucket exists, creating it if necessary."""
+    client = get_s3_client(endpoint_url, region, access_key, secret_key)
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError:
+        client.create_bucket(Bucket=bucket)
+        logger.info("s3_bucket_created", bucket=bucket)
 
 
 def upload_document(
@@ -40,10 +64,28 @@ def upload_document(
             Body=io.BytesIO(document_bytes),
             ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
-        logger.info("document_uploaded", extra={"key": object_key, "size": len(document_bytes)})
+        logger.info("document_uploaded", key=object_key, size=len(document_bytes))
     except ClientError as e:
-        logger.error("s3_upload_failed", extra={"key": object_key, "error": str(e)})
+        logger.error("s3_upload_failed", key=object_key, error=str(e))
         raise
+
+
+def generate_presigned_url(
+    endpoint_url: str,
+    region: str,
+    access_key: str,
+    secret_key: str,
+    bucket: str,
+    object_key: str,
+    expires_in: int = 7 * 24 * 60 * 60,
+) -> str:
+    """Generate a pre-signed URL for downloading an object."""
+    client = get_s3_client(endpoint_url, region, access_key, secret_key)
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": object_key},
+        ExpiresIn=expires_in,
+    )
 
 
 def download_document(
@@ -60,5 +102,5 @@ def download_document(
         response = client.get_object(Bucket=bucket, Key=object_key)
         return response["Body"].read()
     except ClientError as e:
-        logger.error("s3_download_failed", extra={"key": object_key, "error": str(e)})
+        logger.error("s3_download_failed", key=object_key, error=str(e))
         raise

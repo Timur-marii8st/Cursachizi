@@ -4,10 +4,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-import boto3
 import structlog
 from arq.connections import RedisSettings
-from botocore.config import Config
 from botocore.exceptions import ClientError
 from sqlalchemy import update as sql_update
 
@@ -16,84 +14,15 @@ from backend.app.config import get_settings
 from backend.app.db.session import AsyncSessionLocal
 from backend.app.models.job import Job
 from backend.app.pipeline.orchestrator import PipelineOrchestrator, StageCallback
+from backend.app.services.storage import (
+    download_document,
+    ensure_bucket,
+    upload_document,
+)
 from shared.schemas.job import JobStage, JobStatus
 from shared.schemas.pipeline import PipelineConfig
 
 logger = structlog.get_logger()
-
-
-def _upload_document_to_s3(
-    *,
-    endpoint_url: str,
-    region: str,
-    access_key: str,
-    secret_key: str,
-    bucket: str,
-    object_key: str,
-    document_bytes: bytes,
-) -> str:
-    """Upload document bytes to S3 and return a pre-signed download URL."""
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        region_name=region,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        config=Config(
-            s3={"addressing_style": "path"},
-            proxies={},  # bypass system proxy for local MinIO
-        ),
-    )
-
-    try:
-        client.head_bucket(Bucket=bucket)
-    except ClientError:
-        client.create_bucket(Bucket=bucket)
-
-    client.put_object(
-        Bucket=bucket,
-        Key=object_key,
-        Body=document_bytes,
-        ContentType=(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ),
-    )
-
-    return client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": bucket, "Key": object_key},
-        ExpiresIn=7 * 24 * 60 * 60,
-    )
-
-
-def _download_from_s3(
-    *,
-    endpoint_url: str,
-    region: str,
-    access_key: str,
-    secret_key: str,
-    bucket: str,
-    object_key: str,
-) -> bytes | None:
-    """Download an object from S3 and return its bytes."""
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        region_name=region,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        config=Config(
-            s3={"addressing_style": "path"},
-            proxies={},
-        ),
-    )
-
-    try:
-        response = client.get_object(Bucket=bucket, Key=object_key)
-        return response["Body"].read()
-    except ClientError as e:
-        logger.error("s3_download_failed", key=object_key, error=str(e))
-        return None
 
 
 class JobProgressCallback(StageCallback):
@@ -175,18 +104,21 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
         vision_llm = get_vision_llm_provider(settings)
 
-        # Load reference docx for visual matching
+        # ARCH-002: use consolidated storage module instead of duplicated S3 code
         reference_docx_bytes = None
         if reference_s3_key:
-            reference_docx_bytes = await asyncio.to_thread(
-                _download_from_s3,
-                endpoint_url=settings.s3_endpoint_url,
-                region=settings.s3_region,
-                access_key=settings.s3_access_key,
-                secret_key=settings.s3_secret_key,
-                bucket=settings.s3_bucket_name,
-                object_key=reference_s3_key,
-            )
+            try:
+                reference_docx_bytes = await asyncio.to_thread(
+                    download_document,
+                    endpoint_url=settings.s3_endpoint_url,
+                    region=settings.s3_region,
+                    access_key=settings.s3_access_key,
+                    secret_key=settings.s3_secret_key,
+                    bucket=settings.s3_bucket_name,
+                    object_key=reference_s3_key,
+                )
+            except ClientError as e:
+                logger.error("reference_download_failed", key=reference_s3_key, error=str(e))
         elif settings.visual_match_enabled and vision_llm:
             # Use default GOST reference
             from backend.app.pipeline.formatter.gost_reference import get_default_reference
@@ -208,16 +140,21 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
         )
 
         try:
-            result = await orchestrator.run(
-                topic=topic,
-                discipline=discipline,
-                university=university,
-                page_count=page_count,
-                additional_instructions=additional_instructions,
-                work_type=work_type,
-                config=config,
-                callback=callback,
-                reference_docx_bytes=reference_docx_bytes,
+            # ARCH-001: enforce pipeline timeout to prevent indefinite worker blocking
+            timeout = config.timeout_seconds or settings.pipeline_timeout_seconds
+            result = await asyncio.wait_for(
+                orchestrator.run(
+                    topic=topic,
+                    discipline=discipline,
+                    university=university,
+                    page_count=page_count,
+                    additional_instructions=additional_instructions,
+                    work_type=work_type,
+                    config=config,
+                    callback=callback,
+                    reference_docx_bytes=reference_docx_bytes,
+                ),
+                timeout=timeout,
             )
 
             async with AsyncSessionLocal() as session:
@@ -245,8 +182,17 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
                 if result.document_bytes:
                     document_key = f"jobs/{job_id}/{uuid4()}.docx"
+                    # ARCH-002: ensure bucket + upload via consolidated storage module
                     await asyncio.to_thread(
-                        _upload_document_to_s3,
+                        ensure_bucket,
+                        endpoint_url=settings.s3_endpoint_url,
+                        region=settings.s3_region,
+                        access_key=settings.s3_access_key,
+                        secret_key=settings.s3_secret_key,
+                        bucket=settings.s3_bucket_name,
+                    )
+                    await asyncio.to_thread(
+                        upload_document,
                         endpoint_url=settings.s3_endpoint_url,
                         region=settings.s3_region,
                         access_key=settings.s3_access_key,
@@ -266,10 +212,15 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             logger.info("pipeline_worker_complete", job_id=job_id)
             return f"Job {job_id} completed successfully"
         finally:
+            # FIX-002: close all provider clients to prevent TCP connection leaks
             if hasattr(llm, "aclose"):
                 await llm.aclose()
             if vision_llm is not None and hasattr(vision_llm, "aclose"):
                 await vision_llm.aclose()
+            if hasattr(search, "aclose"):
+                await search.aclose()
+            if translator is not None and hasattr(translator, "aclose"):
+                await translator.aclose()
 
     except Exception as e:
         logger.error("pipeline_worker_failed", job_id=job_id, error=str(e))
