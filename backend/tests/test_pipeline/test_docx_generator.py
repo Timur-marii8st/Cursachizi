@@ -583,3 +583,69 @@ class TestFullPipelineFlow:
         assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" in full_text
         # Fallback uses raw sources
         assert "Source One" in full_text
+
+
+class TestEmptyBibliography:
+    """Tests for empty bibliography edge case — should skip bibliography section."""
+
+    def test_empty_bibliography_and_no_sources_skips_section(
+        self,
+        generator: DocxGenerator,
+        sample_outline: Outline,
+        sample_sections: list[SectionContent],
+    ) -> None:
+        """When bibliography is empty and sources list is empty,
+        the bibliography section heading should NOT appear."""
+        doc_bytes = generator.generate(
+            outline=sample_outline,
+            sections=sample_sections,
+            sources=[],
+            bibliography=BibliographyRegistry(entries=[]),
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" not in text
+
+    def test_empty_bibliography_with_sources_uses_fallback(
+        self,
+        generator: DocxGenerator,
+        sample_outline: Outline,
+        sample_sections: list[SectionContent],
+        sample_bib_sources: list[Source],
+    ) -> None:
+        """When bibliography has no entries but raw sources exist,
+        fall back to formatting raw sources."""
+        doc_bytes = generator.generate(
+            outline=sample_outline,
+            sections=sample_sections,
+            sources=sample_bib_sources,
+            bibliography=BibliographyRegistry(entries=[]),
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" in text
+        assert "Иванов" in text
+
+    def test_none_bibliography_and_no_sources_skips_section(
+        self,
+        generator: DocxGenerator,
+        sample_outline: Outline,
+        sample_sections: list[SectionContent],
+    ) -> None:
+        """When bibliography is None and sources list is empty,
+        skip bibliography section."""
+        doc_bytes = generator.generate(
+            outline=sample_outline,
+            sections=sample_sections,
+            sources=[],
+            bibliography=None,
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" not in text

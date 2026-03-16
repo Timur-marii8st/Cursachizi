@@ -293,17 +293,30 @@ class ArticleDocxGenerator:
         """Add bibliography section.
 
         Priority: registry > extracted inline refs > raw sources.
+        Skips the entire section if there are no entries to render.
         """
+        has_registry_entries = bibliography is not None and len(bibliography.entries) > 0
+        has_collected_refs = bool(collected_refs)
+        has_sources = len(sources) > 0
+
+        # Skip entire bibliography section if nothing to render
+        if not has_registry_entries and not has_collected_refs and not has_sources:
+            logger.warning(
+                "article_bibliography_empty_skipping_section",
+                reason="No bibliography entries, collected refs, or fallback sources available",
+            )
+            return
+
         self._add_heading(doc, "СПИСОК ЛИТЕРАТУРЫ", level=1)
 
         # Prefer bibliography registry (real, verified sources)
-        if bibliography and bibliography.entries:
-            for entry in bibliography.entries:
+        if has_registry_entries:
+            for entry in bibliography.entries:  # type: ignore[union-attr]
                 self._add_bib_entry(doc, f"{entry.number}. {entry.formatted_reference}")
             return
 
-        if collected_refs:
-            for i, ref_text in enumerate(collected_refs, 1):
+        if has_collected_refs:
+            for i, ref_text in enumerate(collected_refs, 1):  # type: ignore[arg-type]
                 self._add_bib_entry(doc, f"{i}. {ref_text}")
             return
 

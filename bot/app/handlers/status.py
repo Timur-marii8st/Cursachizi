@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, Message
 
 from bot.app.services.api_client import CourseForgeAPIClient
-from shared.schemas.job import JobStage, JobStatus
+from shared.schemas.job import JobStage, JobStatus, WorkType
 
 router = Router()
 
@@ -67,10 +67,14 @@ async def cmd_status(
             try:
                 doc_bytes = await api_client.download_document(job.id)
                 safe_topic = job.topic[:40].replace("/", "_")
-                filename = f"courseforge_{safe_topic}.docx"
+                work_label = (
+                    "научная статья" if job.work_type == WorkType.ARTICLE
+                    else "курсовая работа"
+                )
+                filename = f"{work_label.replace(' ', '_')}_{safe_topic}.docx"
                 await message.answer_document(
                     BufferedInputFile(doc_bytes, filename=filename),
-                    caption="Ваша курсовая работа готова!",
+                    caption=f"Ваша {work_label} готова!",
                 )
             except Exception:
                 await message.answer(

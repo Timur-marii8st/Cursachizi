@@ -6,7 +6,13 @@ import pytest
 from docx import Document
 
 from backend.app.pipeline.formatter.article_docx_generator import ArticleDocxGenerator
-from shared.schemas.pipeline import Outline, OutlineChapter, SectionContent, Source
+from shared.schemas.pipeline import (
+    BibliographyRegistry,
+    Outline,
+    OutlineChapter,
+    SectionContent,
+    Source,
+)
 from shared.schemas.template import GostTemplate
 
 
@@ -358,3 +364,65 @@ class TestArticleDocxGenerator:
         assert abs(section.right_margin - 10 * mm_to_emu) < mm_to_emu
         assert abs(section.top_margin - 25 * mm_to_emu) < mm_to_emu
         assert abs(section.bottom_margin - 25 * mm_to_emu) < mm_to_emu
+
+
+class TestArticleEmptyBibliography:
+    """Tests for empty bibliography edge case in article generation."""
+
+    def test_empty_bibliography_and_no_sources_skips_section(
+        self,
+        generator: ArticleDocxGenerator,
+        sample_outline: Outline,
+        sample_sections: list[SectionContent],
+    ) -> None:
+        """Bibliography section should be skipped when nothing to render."""
+        doc_bytes = generator.generate(
+            outline=sample_outline,
+            sections=sample_sections,
+            sources=[],
+            bibliography=BibliographyRegistry(entries=[]),
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ЛИТЕРАТУРЫ" not in text
+
+    def test_empty_bibliography_with_sources_uses_fallback(
+        self,
+        generator: ArticleDocxGenerator,
+        sample_outline: Outline,
+        sample_sections: list[SectionContent],
+        sample_sources: list[Source],
+    ) -> None:
+        """When bibliography empty but raw sources exist, use fallback."""
+        doc_bytes = generator.generate(
+            outline=sample_outline,
+            sections=sample_sections,
+            sources=sample_sources,
+            bibliography=BibliographyRegistry(entries=[]),
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ЛИТЕРАТУРЫ" in text
+
+    def test_none_bibliography_and_no_sources_skips_section(
+        self,
+        generator: ArticleDocxGenerator,
+        sample_outline: Outline,
+        sample_sections: list[SectionContent],
+    ) -> None:
+        """When bibliography is None and no sources, skip section."""
+        doc_bytes = generator.generate(
+            outline=sample_outline,
+            sections=sample_sections,
+            sources=[],
+            bibliography=None,
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ЛИТЕРАТУРЫ" not in text

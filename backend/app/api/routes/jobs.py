@@ -137,6 +137,10 @@ async def create_job(
     await db.flush()
     await db.refresh(job)
 
+    # Commit before enqueuing to avoid race condition: arq worker must see the
+    # committed Job row when it reads from a separate DB connection.
+    await db.commit()
+
     await arq_pool.enqueue_job("run_pipeline", job.id)
 
     return _job_to_response(job)

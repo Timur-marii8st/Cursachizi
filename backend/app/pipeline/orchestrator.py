@@ -173,6 +173,15 @@ class PipelineOrchestrator:
                     topic=topic[:80],
                 )
 
+            if not result.bibliography.entries:
+                logger.warning(
+                    "bibliography_registry_empty",
+                    sources_count=len(result.research.sources),
+                    topic=topic[:80],
+                    hint="Document will be generated without bibliography section. "
+                    "LLM will not use citations in section text.",
+                )
+
             await callback.on_stage_complete(
                 "researching",
                 f"Найдено {len(result.research.sources)} источников "

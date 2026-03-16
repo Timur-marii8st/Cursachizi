@@ -197,10 +197,28 @@ class ArticleSectionWriter:
     ) -> SectionContent:
         """Write a single article section."""
         previous_context = self._format_previous(previous_sections[-2:])
-        if bibliography:
+        has_sources = (bibliography and bibliography.entries) or sources
+        if bibliography and bibliography.entries:
             sources_text = bibliography.format_with_content(sources)
-        else:
+        elif sources:
             sources_text = self._format_sources(sources)
+        else:
+            sources_text = "Источники не предоставлены."
+            logger.warning(
+                "article_section_writer_no_sources",
+                section=chapter.title[:50],
+                reason="Both bibliography and sources are empty",
+            )
+
+        # When no sources are available, override instructions to prevent hallucinated citations
+        if not has_sources:
+            no_cite_note = (
+                "ВНИМАНИЕ: Источники не найдены. НЕ используй ссылки [N] в тексте. "
+                "Пиши без цитирования, опираясь на общеизвестные факты."
+            )
+            effective_instructions = no_cite_note
+        else:
+            effective_instructions = additional_instructions or "Нет дополнительных инструкций."
 
         prompt = ARTICLE_SECTION_PROMPT.format(
             paper_title=paper_title,
@@ -209,7 +227,7 @@ class ArticleSectionWriter:
             previous_context=previous_context,
             sources_text=sources_text,
             target_words=target_words,
-            additional_instructions=additional_instructions or "Нет дополнительных инструкций.",
+            additional_instructions=effective_instructions,
         )
 
         response = await self._llm.generate(

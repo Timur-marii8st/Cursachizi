@@ -394,8 +394,10 @@ class DocxGenerator:
 
         Uses the bibliography registry (built from real research sources) when
         available. Falls back to formatting raw Source objects.
+        Skips the entire section if there are no entries to render.
         """
-        self._add_heading(doc, "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ", level=1, numbered=False)
+        has_registry_entries = bibliography is not None and len(bibliography.entries) > 0
+        has_sources = len(sources) > 0
 
         logger.info(
             "adding_bibliography",
@@ -404,9 +406,19 @@ class DocxGenerator:
             fallback_sources=len(sources),
         )
 
+        # Skip entire bibliography section if nothing to render
+        if not has_registry_entries and not has_sources:
+            logger.warning(
+                "bibliography_empty_skipping_section",
+                reason="No bibliography entries and no fallback sources available",
+            )
+            return
+
+        self._add_heading(doc, "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ", level=1, numbered=False)
+
         # Prefer bibliography registry (real, verified sources)
-        if bibliography and bibliography.entries:
-            for entry in bibliography.entries:
+        if has_registry_entries:
+            for entry in bibliography.entries:  # type: ignore[union-attr]
                 self._add_bib_entry(doc, f"{entry.number}. {entry.formatted_reference}")
             return
 

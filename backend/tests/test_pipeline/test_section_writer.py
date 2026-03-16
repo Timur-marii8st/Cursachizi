@@ -4,7 +4,13 @@ import pytest
 
 from backend.app.pipeline.writer.section_writer import SectionWriter, _safe
 from backend.app.testing import MockLLMProvider
-from shared.schemas.pipeline import Outline, OutlineChapter, SectionContent, Source
+from shared.schemas.pipeline import (
+    BibliographyRegistry,
+    Outline,
+    OutlineChapter,
+    SectionContent,
+    Source,
+)
 
 
 @pytest.fixture
@@ -281,3 +287,54 @@ class TestSectionWriter:
         )
         prompt = mock_llm.calls[0]["messages"][0].content
         assert "Включить" in prompt
+
+
+class TestSectionWriterEmptySources:
+    """Tests for section writing when no sources are available."""
+
+    async def test_empty_bibliography_prevents_citation_hallucination(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+    ) -> None:
+        """When bibliography is empty and sources are empty,
+        prompt should instruct LLM not to use citations."""
+        mock_llm.set_responses(["Текст раздела без цитирования."])
+        writer = SectionWriter(llm=mock_llm)
+
+        await writer.write_section(
+            paper_title="Тестовая тема",
+            chapter=outline.chapters[0],
+            section_title="1.1 Раздел",
+            sources=[],
+            previous_sections=[],
+            bibliography=BibliographyRegistry(entries=[]),
+        )
+
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "НЕ используй ссылки [N]" in prompt
+        assert "Источники не предоставлены" in prompt
+
+    async def test_with_sources_includes_citation_instructions(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """When bibliography has entries, normal citation instructions apply."""
+        bib = BibliographyRegistry.from_sources(sources)
+        mock_llm.set_responses(["Текст с цитированием [1]."])
+        writer = SectionWriter(llm=mock_llm)
+
+        await writer.write_section(
+            paper_title="Тестовая тема",
+            chapter=outline.chapters[0],
+            section_title="1.1 Раздел",
+            sources=sources,
+            previous_sections=[],
+            bibliography=bib,
+        )
+
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "НЕ используй ссылки [N]" not in prompt
+        assert "Источник 1" in prompt

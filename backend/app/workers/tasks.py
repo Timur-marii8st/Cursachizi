@@ -153,6 +153,12 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
         await session.commit()
 
         work_type = job.work_type
+        logger.info(
+            "pipeline_worker_job_loaded",
+            job_id=job_id,
+            work_type=work_type,
+            topic=job.topic[:80],
+        )
         topic = job.topic
         discipline = job.discipline
         university = job.university
