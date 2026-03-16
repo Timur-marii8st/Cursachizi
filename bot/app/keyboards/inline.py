@@ -2,22 +2,34 @@
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from shared.schemas.job import WorkType
 
-def get_page_count_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard for selecting target page count."""
+_COURSEWORK_PAGE_COUNTS = [20, 25, 30, 35, 40, 50]
+_ARTICLE_PAGE_COUNTS = [5, 8, 10, 12, 15, 20]
+
+
+def get_work_type_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for selecting the type of academic work."""
     buttons = [
         [
-            InlineKeyboardButton(text="20 стр.", callback_data="pages:20"),
-            InlineKeyboardButton(text="25 стр.", callback_data="pages:25"),
-            InlineKeyboardButton(text="30 стр.", callback_data="pages:30"),
-        ],
-        [
-            InlineKeyboardButton(text="35 стр.", callback_data="pages:35"),
-            InlineKeyboardButton(text="40 стр.", callback_data="pages:40"),
-            InlineKeyboardButton(text="50 стр.", callback_data="pages:50"),
+            InlineKeyboardButton(text="📝 Курсовая работа", callback_data="worktype:coursework"),
+            InlineKeyboardButton(text="📰 Научная статья", callback_data="worktype:article"),
         ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_page_count_keyboard(work_type: WorkType = WorkType.COURSEWORK) -> InlineKeyboardMarkup:
+    """Keyboard for selecting target page count.
+
+    Page ranges differ by work type:
+    - Coursework: 20–50 pages
+    - Article: 5–20 pages
+    """
+    counts = _ARTICLE_PAGE_COUNTS if work_type == WorkType.ARTICLE else _COURSEWORK_PAGE_COUNTS
+    row1 = [InlineKeyboardButton(text=f"{n} стр.", callback_data=f"pages:{n}") for n in counts[:3]]
+    row2 = [InlineKeyboardButton(text=f"{n} стр.", callback_data=f"pages:{n}") for n in counts[3:]]
+    return InlineKeyboardMarkup(inline_keyboard=[row1, row2])
 
 
 def get_confirm_keyboard() -> InlineKeyboardMarkup:

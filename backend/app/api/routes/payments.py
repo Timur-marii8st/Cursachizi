@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import select
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.deps import get_db, verify_internal_api_key
@@ -15,6 +15,10 @@ from backend.app.models.user import User
 from backend.app.services.robokassa import (
     generate_payment_link,
     verify_result_signature,
+)
+from backend.app.services.user_service import (
+    get_or_create_user_by_telegram_id,
+    get_user_by_telegram_id,
 )
 from shared.schemas.payment import (
     PACKAGES_BY_ID,
@@ -50,7 +54,7 @@ async def create_payment(
         raise HTTPException(status_code=400, detail="Invalid package_id")
 
     # Find or create user by telegram_id
-    user = await _get_or_create_user_by_telegram(db, payment_in.telegram_id)
+    user = await get_or_create_user_by_telegram_id(db, payment_in.telegram_id)
 
     # Create payment record
     payment = Payment(
@@ -112,6 +116,9 @@ async def robokassa_result(
     inv_id = str(form.get("InvId", ""))
     signature_value = str(form.get("SignatureValue", ""))
 
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info("robokassa_webhook_received", inv_id=inv_id, client_ip=client_ip)
+
     if not verify_result_signature(
         password2=settings.robokassa_password2,
         out_sum=out_sum,
@@ -121,35 +128,51 @@ async def robokassa_result(
         logger.warning("robokassa_invalid_signature", inv_id=inv_id)
         return "bad sign"
 
-    # Find payment
+    # Parse payment ID
     try:
         payment_id = int(inv_id)
     except ValueError:
         logger.warning("robokassa_invalid_inv_id", inv_id=inv_id)
         return "bad inv_id"
-    payment = await db.get(Payment, payment_id)
-    if not payment:
-        logger.warning("robokassa_payment_not_found", inv_id=inv_id)
-        return "bad inv_id"
 
-    if payment.status == PaymentStatus.COMPLETED:
-        # Idempotent — already processed
+    # Atomically mark payment as completed ONLY if it's still pending
+    update_result = await db.execute(
+        update(Payment)
+        .where(Payment.id == payment_id, Payment.status == PaymentStatus.PENDING)
+        .values(
+            status=PaymentStatus.COMPLETED,
+            completed_at=datetime.now(UTC),
+        )
+        .returning(Payment.user_id, Payment.credits)
+    )
+    row = update_result.fetchone()
+    if row is None:
+        # Either payment not found or already completed — idempotent
+        # Check if payment even exists to return correct response
+        existing = await db.get(Payment, payment_id)
+        if not existing:
+            logger.warning("robokassa_payment_not_found", inv_id=inv_id)
+            return "bad inv_id"
+        # Already completed — idempotent success
         return f"OK{inv_id}"
 
-    # Mark payment as completed
-    payment.status = PaymentStatus.COMPLETED
-    payment.completed_at = datetime.now(UTC)
+    user_id, credits = row.user_id, row.credits
 
-    # Add credits to user
-    user = await db.get(User, payment.user_id)
+    # Atomically add credits to user
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(credits_remaining=User.credits_remaining + credits)
+    )
+
+    # Log success (fetch user info for logging)
+    user = await db.get(User, user_id)
     if user:
-        user.credits_remaining += payment.credits
         logger.info(
             "credits_added",
             user_id=user.id,
             telegram_id=user.telegram_id,
-            credits_added=payment.credits,
-            new_balance=user.credits_remaining,
+            credits_added=credits,
         )
 
     await db.flush()
@@ -168,7 +191,7 @@ async def get_balance(
     db: AsyncSession = Depends(get_db),
 ) -> BalanceResponse:
     """Get user's credit balance by Telegram ID."""
-    user = await _get_user_by_telegram(db, telegram_id)
+    user = await get_user_by_telegram_id(db, telegram_id)
     if not user:
         # New user — return default trial balance
         return BalanceResponse(
@@ -183,17 +206,3 @@ async def get_balance(
     )
 
 
-async def _get_user_by_telegram(db: AsyncSession, telegram_id: int) -> User | None:
-    query = select(User).where(User.telegram_id == telegram_id)
-    result = await db.execute(query)
-    return result.scalar_one_or_none()
-
-
-async def _get_or_create_user_by_telegram(db: AsyncSession, telegram_id: int) -> User:
-    user = await _get_user_by_telegram(db, telegram_id)
-    if user:
-        return user
-    user = User(telegram_id=telegram_id, credits_remaining=1)
-    db.add(user)
-    await db.flush()
-    return user

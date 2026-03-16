@@ -2,7 +2,6 @@
 
 from collections.abc import AsyncGenerator
 
-import redis.asyncio as redis
 from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +14,18 @@ from backend.app.pipeline.research.searcher import (
     SerperSearchProvider,
     TavilySearchProvider,
 )
+
+# Atomic increment + conditional expire using Lua.
+# Eliminates the race condition between INCR and EXPIRE: if the process dies
+# after INCR but before EXPIRE the key would never expire, breaking rate
+# limiting permanently.  The script executes as a single Redis transaction.
+_RATE_LIMIT_SCRIPT = """
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return current
+"""
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -76,13 +87,18 @@ async def enforce_job_rate_limit(
 
     redis_pool = getattr(request.app.state, "redis_pool", None)
     if redis_pool is None:
-        # Fallback: create a one-off connection (dev mode without lifespan)
-        redis_pool = redis.from_url(settings.redis_url)
+        if settings.is_production:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limiter unavailable",
+            )
+        # Dev mode: skip rate limiting when Redis is not available.
+        return
 
     try:
-        current = int(await redis_pool.incr(rate_key))
-        if current == 1:
-            await redis_pool.expire(rate_key, window_seconds)
+        current = int(
+            await redis_pool.eval(_RATE_LIMIT_SCRIPT, 1, rate_key, str(window_seconds))
+        )
         ttl_seconds = await redis_pool.ttl(rate_key)
     except Exception as exc:
         if settings.is_production:

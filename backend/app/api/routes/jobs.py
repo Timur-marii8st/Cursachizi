@@ -18,6 +18,7 @@ from backend.app.api.deps import (
 )
 from backend.app.models.job import Job
 from backend.app.models.user import User
+from backend.app.services.user_service import get_or_create_user_by_telegram_id
 from shared.schemas.job import (
     JobCreate,
     JobProgress,
@@ -84,7 +85,7 @@ async def create_job(
     """Create a new coursework generation job."""
     # Use real user identified by telegram_id, fall back to default for API testing
     if job_in.telegram_id:
-        user = await _get_or_create_user_by_telegram_id(db, job_in.telegram_id)
+        user = await get_or_create_user_by_telegram_id(db, job_in.telegram_id)
     else:
         user = await _get_or_create_default_user(db)
 
@@ -313,14 +314,3 @@ async def _get_or_create_default_user(db: AsyncSession) -> User:
     return user
 
 
-async def _get_or_create_user_by_telegram_id(db: AsyncSession, telegram_id: int) -> User:
-    """Get or create user by Telegram ID."""
-    query = select(User).where(User.telegram_id == telegram_id)
-    result = await db.execute(query)
-    user = result.scalar_one_or_none()
-    if user:
-        return user
-    user = User(telegram_id=telegram_id, credits_remaining=1)
-    db.add(user)
-    await db.flush()
-    return user

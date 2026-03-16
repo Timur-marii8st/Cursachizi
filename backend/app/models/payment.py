@@ -14,7 +14,7 @@ class Payment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
     )
 

@@ -86,14 +86,20 @@ class BibliographyRegistry(BaseModel):
 
     @classmethod
     def from_sources(cls, sources: list["Source"]) -> "BibliographyRegistry":
-        """Build a registry from research sources, deduplicating by URL."""
+        """Build a registry from research sources, deduplicating by URL or title."""
         seen_urls: set[str] = set()
+        seen_titles: set[str] = set()
         unique_sources: list[Source] = []
         for source in sources:
-            if source.url and source.url in seen_urls:
-                continue
             if source.url:
+                if source.url in seen_urls:
+                    continue
                 seen_urls.add(source.url)
+            else:
+                normalized = source.title.strip().lower()
+                if normalized in seen_titles:
+                    continue
+                seen_titles.add(normalized)
             unique_sources.append(source)
 
         entries = []
@@ -132,12 +138,25 @@ class BibliographyRegistry(BaseModel):
         """
         if not self.entries:
             return "Источники не предоставлены."
+
+        # Build lookup: url → source (primary), then title → source (fallback)
+        by_url: dict[str, Source] = {}
+        by_title: dict[str, Source] = {}
+        for source in sources:
+            if source.url:
+                by_url[source.url] = source
+            title_key = source.title.strip().lower()
+            if title_key not in by_title:
+                by_title[title_key] = source
+
         lines = []
         content_count = 0
         for entry in self.entries:
-            # Match by position: entry.number is 1-based index into original sources list
-            source_idx = entry.number - 1
-            source = sources[source_idx] if 0 <= source_idx < len(sources) else None
+            # Look up source by URL first, then by title
+            source = by_url.get(entry.url) if entry.url else None
+            if source is None:
+                source = by_title.get(entry.title.strip().lower())
+
             if source and content_count < max_content_entries:
                 text = source.full_text[:1500] if source.full_text else source.snippet
                 if text:
