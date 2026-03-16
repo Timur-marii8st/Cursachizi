@@ -6,7 +6,13 @@ from backend.app.pipeline.writer.intro_conclusion_validator import (
     IntroductionConclusionValidator,
 )
 from backend.app.testing import MockLLMProvider
-from shared.schemas.pipeline import Outline, OutlineChapter, SectionContent
+from shared.schemas.pipeline import (
+    BibliographyRegistry,
+    Outline,
+    OutlineChapter,
+    SectionContent,
+    Source,
+)
 
 
 @pytest.fixture
@@ -268,3 +274,127 @@ class TestConclusionValidator:
         )
 
         assert result.content == poor_conclusion.content
+
+
+@pytest.fixture
+def sources() -> list[Source]:
+    return [
+        Source(
+            url="https://example.com/1",
+            title="Источник 1: Цифровизация HR",
+            snippet="Краткое описание",
+            full_text="Полный текст источника",
+            relevance_score=0.9,
+        ),
+        Source(
+            url="https://example.com/2",
+            title="Источник 2: Управление персоналом",
+            snippet="Другой источник",
+            full_text="Информация об управлении",
+            relevance_score=0.8,
+        ),
+    ]
+
+
+class TestValidatorWithBibliography:
+    """Tests that fix_introduction and fix_conclusion receive and use bibliography."""
+
+    async def test_fix_introduction_includes_sources_in_prompt(
+        self,
+        mock_llm: MockLLMProvider,
+        incomplete_intro: SectionContent,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """fix_introduction prompt should include bibliography sources."""
+        bib = BibliographyRegistry.from_sources(sources)
+        fixed_text = (
+            "Актуальность данной темы [1] обусловлена развитием технологий. "
+            "Цель исследования — изучить влияние [2]. "
+            "Задачи исследования: проанализировать теорию. "
+            "Объект исследования — управление персоналом. "
+            "Предмет исследования — цифровые инструменты. "
+            "Методы исследования: анализ литературы. "
+            "Работа состоит из двух глав."
+        )
+        mock_llm.set_responses([fixed_text])
+        validator = IntroductionConclusionValidator(llm=mock_llm)
+
+        missing = validator.check_introduction(incomplete_intro)
+        result = await validator.fix_introduction(
+            section=incomplete_intro,
+            missing_elements=missing,
+            topic="Цифровизация",
+            discipline="Менеджмент",
+            outline=outline,
+            sources=sources,
+            bibliography=bib,
+        )
+
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "РЕЕСТР ИСТОЧНИКОВ" in prompt
+        assert "1" in result.citations
+        assert "2" in result.citations
+
+    async def test_fix_conclusion_includes_sources_in_prompt(
+        self,
+        mock_llm: MockLLMProvider,
+        poor_conclusion: SectionContent,
+        complete_intro: SectionContent,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """fix_conclusion prompt should include bibliography sources."""
+        bib = BibliographyRegistry.from_sources(sources)
+        fixed_text = (
+            "В ходе исследования получены результаты [1]. "
+            "Практическая значимость работы подтверждается данными [2]. "
+            "Дальнейшие перспективы исследований связаны с расширением."
+        )
+        mock_llm.set_responses([fixed_text])
+        validator = IntroductionConclusionValidator(llm=mock_llm)
+
+        issues = validator.check_conclusion(poor_conclusion, complete_intro)
+        result = await validator.fix_conclusion(
+            section=poor_conclusion,
+            issues=issues,
+            topic="Цифровизация",
+            discipline="Менеджмент",
+            outline=outline,
+            sources=sources,
+            bibliography=bib,
+        )
+
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "РЕЕСТР ИСТОЧНИКОВ" in prompt
+        assert "1" in result.citations
+        assert "2" in result.citations
+
+    async def test_fix_introduction_without_bibliography(
+        self,
+        mock_llm: MockLLMProvider,
+        incomplete_intro: SectionContent,
+        outline: Outline,
+    ) -> None:
+        """fix_introduction should work without bibliography (backward compat)."""
+        fixed_text = (
+            "Актуальность обусловлена. Цель — изучить. "
+            "Задачи: проанализировать. Объект — HR. "
+            "Предмет — цифровые инструменты. "
+            "Методы: анализ литературы. Работа состоит из глав."
+        )
+        mock_llm.set_responses([fixed_text])
+        validator = IntroductionConclusionValidator(llm=mock_llm)
+
+        missing = validator.check_introduction(incomplete_intro)
+        result = await validator.fix_introduction(
+            section=incomplete_intro,
+            missing_elements=missing,
+            topic="Тема",
+            discipline="Менеджмент",
+            outline=outline,
+        )
+
+        assert result.chapter_number == 0
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "Источники не предоставлены" in prompt

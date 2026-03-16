@@ -338,3 +338,136 @@ class TestSectionWriterEmptySources:
         prompt = mock_llm.calls[0]["messages"][0].content
         assert "НЕ используй ссылки [N]" not in prompt
         assert "Источник 1" in prompt
+
+
+class TestIntroductionWithBibliography:
+    """Tests that introduction receives and uses bibliography sources."""
+
+    async def test_introduction_receives_bibliography(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """Introduction prompt should include bibliography sources."""
+        bib = BibliographyRegistry.from_sources(sources)
+        mock_llm.set_responses([
+            "Актуальность темы [1] подтверждается исследованиями [2]."
+        ])
+        writer = SectionWriter(llm=mock_llm)
+
+        result = await writer.write_introduction(
+            topic="Цифровизация в HR",
+            discipline="Менеджмент",
+            outline=outline,
+            sources=sources,
+            bibliography=bib,
+        )
+
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "РЕЕСТР ИСТОЧНИКОВ" in prompt
+        assert "Источник 1" in prompt or "[1]" in prompt
+        assert result.citations == ["1", "2"] or set(result.citations) == {"1", "2"}
+
+    async def test_introduction_without_sources_warns_no_citations(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+    ) -> None:
+        """Introduction without sources should tell LLM not to use citations."""
+        mock_llm.set_responses(["Актуальность темы обусловлена развитием."])
+        writer = SectionWriter(llm=mock_llm)
+
+        result = await writer.write_introduction(
+            topic="Тема",
+            discipline="Менеджмент",
+            outline=outline,
+            sources=[],
+            bibliography=BibliographyRegistry(entries=[]),
+        )
+
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "НЕ используй ссылки [N]" in prompt
+        assert result.citations == []
+
+    async def test_introduction_extracts_citations(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """Introduction should extract citation numbers from generated text."""
+        bib = BibliographyRegistry.from_sources(sources)
+        mock_llm.set_responses([
+            "Исследования показывают [1], что тема актуальна [2]. "
+            "Также подтверждается [1] другими работами."
+        ])
+        writer = SectionWriter(llm=mock_llm)
+
+        result = await writer.write_introduction(
+            topic="Тема",
+            discipline="Дисциплина",
+            outline=outline,
+            sources=sources,
+            bibliography=bib,
+        )
+
+        assert "1" in result.citations
+        assert "2" in result.citations
+
+
+class TestConclusionWithBibliography:
+    """Tests that conclusion receives and uses bibliography sources."""
+
+    async def test_conclusion_receives_bibliography(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+        sources: list[Source],
+    ) -> None:
+        """Conclusion prompt should include bibliography sources."""
+        bib = BibliographyRegistry.from_sources(sources)
+        mock_llm.set_responses([
+            "Результаты подтверждают данные [1]. Выводы согласуются с [2]."
+        ])
+        writer = SectionWriter(llm=mock_llm)
+
+        sections = [
+            SectionContent(
+                chapter_number=1,
+                section_title="1.1 Теория",
+                content="Контент главы 1",
+                word_count=500,
+            ),
+        ]
+
+        result = await writer.write_conclusion(
+            topic="Цифровизация",
+            outline=outline,
+            sections=sections,
+            sources=sources,
+            bibliography=bib,
+        )
+
+        prompt = mock_llm.calls[0]["messages"][0].content
+        assert "РЕЕСТР ИСТОЧНИКОВ" in prompt
+        assert result.citations == ["1", "2"] or set(result.citations) == {"1", "2"}
+
+    async def test_conclusion_extracts_citations(
+        self,
+        mock_llm: MockLLMProvider,
+        outline: Outline,
+    ) -> None:
+        """Conclusion should extract citation numbers from generated text."""
+        mock_llm.set_responses([
+            "Исследование подтвердило [3] основные выводы."
+        ])
+        writer = SectionWriter(llm=mock_llm)
+
+        result = await writer.write_conclusion(
+            topic="Тема",
+            outline=outline,
+            sections=[],
+        )
+
+        assert "3" in result.citations
