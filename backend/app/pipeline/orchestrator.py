@@ -200,6 +200,13 @@ class PipelineOrchestrator:
             is_article = work_type_enum == WorkType.ARTICLE
             writer_stage = self._article_writer_stage if is_article else self._writer_stage
             work_label = "статьи" if is_article else "курсовой"
+            logger.info(
+                "work_type_routing",
+                raw_work_type=work_type,
+                work_type_enum=str(work_type_enum),
+                is_article=is_article,
+                writer_stage=type(writer_stage).__name__,
+            )
 
             # Stage 2: Outline
             await callback.on_stage_start("outlining", f"Составляем план {work_label}...")
@@ -441,6 +448,7 @@ class PipelineOrchestrator:
                     university=university,
                     discipline=discipline,
                     bibliography=result.bibliography,
+                    work_type=work_type_enum,
                 )
 
                 iterations_done = len(result.visual_match_results)

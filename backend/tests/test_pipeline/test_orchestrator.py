@@ -1,8 +1,10 @@
 """Tests for the pipeline orchestrator."""
 
+import io
 import json
 
 import pytest
+from docx import Document
 
 from backend.app.pipeline.orchestrator import PipelineOrchestrator, StageCallback
 from backend.app.testing import MockLLMProvider, MockSearchProvider
@@ -273,3 +275,137 @@ class TestPipelineOrchestrator:
         assert "Аннотация" in section_titles
         assert "Введение" in section_titles
         assert "Заключение" in section_titles
+
+        # Verify the generated docx does NOT contain "КУРСОВАЯ РАБОТА"
+        doc = Document(io.BytesIO(result.document_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        assert "КУРСОВАЯ РАБОТА" not in full_text, (
+            "Article document must NOT contain 'КУРСОВАЯ РАБОТА'"
+        )
+
+    async def test_pipeline_coursework_has_correct_label(
+        self,
+        mock_llm: MockLLMProvider,
+        search_with_results: MockSearchProvider,
+    ) -> None:
+        """Test coursework pipeline produces 'КУРСОВАЯ РАБОТА' label."""
+        query_response = json.dumps({"queries": ["q1"]})
+        outline_response = json.dumps({
+            "title": "Тестовая курсовая",
+            "introduction_points": [],
+            "chapters": [
+                {
+                    "number": 1,
+                    "title": "Глава 1",
+                    "subsections": ["1.1 Раздел"],
+                    "description": "Описание",
+                    "estimated_pages": 5,
+                }
+            ],
+            "conclusion_points": [],
+        })
+        section_text = "Текст раздела курсовой работы [1]. " * 30
+
+        mock_llm.set_responses([
+            query_response,
+            outline_response,
+            section_text,  # intro
+            section_text,  # 1.1
+            section_text,  # conclusion
+            section_text,  # padding
+            section_text,  # padding
+        ])
+
+        config = PipelineConfig(
+            enable_fact_check=False,
+            max_search_results=5,
+            enable_section_rewrite=False,
+            enable_coherence_check=False,
+        )
+
+        orchestrator = PipelineOrchestrator(
+            llm=mock_llm, search=search_with_results
+        )
+
+        result = await orchestrator.run(
+            topic="Тестовая курсовая",
+            work_type=WorkType.COURSEWORK,
+            config=config,
+        )
+
+        assert result.error is None
+        assert result.document_bytes is not None
+
+        doc = Document(io.BytesIO(result.document_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        assert "КУРСОВАЯ РАБОТА" in full_text, (
+            "Coursework document must contain 'КУРСОВАЯ РАБОТА'"
+        )
+
+    async def test_pipeline_article_has_bibliography(
+        self,
+        mock_llm: MockLLMProvider,
+        search_with_results: MockSearchProvider,
+    ) -> None:
+        """Test that article pipeline produces bibliography when sources exist."""
+        query_response = json.dumps({"queries": ["q1"]})
+        outline_response = json.dumps({
+            "title": "Тестовая статья",
+            "abstract_points": ["Точка 1"],
+            "keywords": ["тест"],
+            "introduction_points": ["Актуальность"],
+            "sections": [
+                {
+                    "number": 1,
+                    "title": "Раздел 1",
+                    "description": "Описание",
+                    "estimated_pages": 3,
+                },
+            ],
+            "conclusion_points": ["Вывод"],
+        })
+        section_text = "Текст с ссылками [1] и [2]. " * 30
+
+        mock_llm.set_responses([
+            query_response,
+            outline_response,
+            section_text,  # abstract
+            section_text,  # intro
+            section_text,  # section 1
+            section_text,  # conclusion
+        ])
+
+        config = PipelineConfig(
+            enable_fact_check=False,
+            max_search_results=5,
+            enable_section_rewrite=False,
+            enable_coherence_check=False,
+        )
+
+        orchestrator = PipelineOrchestrator(
+            llm=mock_llm, search=search_with_results
+        )
+
+        result = await orchestrator.run(
+            topic="Тестовая статья",
+            work_type=WorkType.ARTICLE,
+            config=config,
+        )
+
+        assert result.error is None
+        assert result.document_bytes is not None
+
+        # Check that research found sources
+        assert len(result.research.sources) > 0, "Research should find sources"
+        assert result.bibliography is not None
+        assert len(result.bibliography.entries) > 0, "Bibliography should have entries"
+
+        doc = Document(io.BytesIO(result.document_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        assert "СПИСОК ЛИТЕРАТУРЫ" in full_text, (
+            "Article should contain bibliography section"
+        )
+        # Check at least one source appears
+        assert "Source 1" in full_text or "Source 2" in full_text or "example.com" in full_text, (
+            "Bibliography should contain actual sources"
+        )

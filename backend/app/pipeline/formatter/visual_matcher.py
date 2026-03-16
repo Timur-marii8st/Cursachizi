@@ -20,6 +20,7 @@ import structlog
 from backend.app.llm.openrouter import OpenRouterProvider
 from backend.app.pipeline.formatter.document_renderer import DocumentRenderer
 from backend.app.pipeline.formatter.docx_generator import DocxGenerator
+from shared.schemas.job import WorkType
 from shared.schemas.pipeline import (
     BibliographyRegistry,
     Outline,
@@ -159,6 +160,7 @@ class VisualTemplateMatcher:
         university: str = "",
         discipline: str = "",
         bibliography: BibliographyRegistry | None = None,
+        work_type: WorkType = WorkType.COURSEWORK,
     ) -> tuple[bytes, GostTemplate, list[VisualMatchResult]]:
         """Iteratively refine document formatting to match a reference.
 
@@ -188,7 +190,7 @@ class VisualTemplateMatcher:
             doc_bytes = generator.generate(
                 outline=outline, sections=sections, sources=sources,
                 university=university, discipline=discipline,
-                bibliography=bibliography,
+                bibliography=bibliography, work_type=work_type,
             )
             return doc_bytes, template, results
 
@@ -200,7 +202,7 @@ class VisualTemplateMatcher:
             doc_bytes = generator.generate(
                 outline=outline, sections=sections, sources=sources,
                 university=university, discipline=discipline,
-                bibliography=bibliography,
+                bibliography=bibliography, work_type=work_type,
             )
 
             # Render our document
@@ -253,7 +255,7 @@ class VisualTemplateMatcher:
         final_bytes = generator.generate(
             outline=outline, sections=sections, sources=sources,
             university=university, discipline=discipline,
-            bibliography=bibliography,
+            bibliography=bibliography, work_type=work_type,
         )
 
         return final_bytes, template, results
