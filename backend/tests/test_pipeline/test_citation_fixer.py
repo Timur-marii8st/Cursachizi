@@ -1,6 +1,5 @@
 """Tests for citation_fixer — remapping LLM citations to real registry entries."""
 
-import pytest
 
 from backend.app.pipeline.writer.citation_fixer import (
     _build_citation_mapping,
@@ -11,7 +10,7 @@ from backend.app.pipeline.writer.citation_fixer import (
     _strip_section_heading,
     fix_citations,
 )
-from shared.schemas.pipeline import BibliographyEntry, BibliographyRegistry, SectionContent, Source
+from shared.schemas.pipeline import BibliographyRegistry, SectionContent, Source
 
 
 def _make_registry(n: int = 5) -> BibliographyRegistry:
@@ -161,7 +160,7 @@ class TestRemapCitations:
     def test_remaps_with_mapping(self):
         text = "According to [1] and [2], this is true."
         mapping = {1: 5, 2: 3}
-        result, remapped, invalid = _remap_citations(text, mapping, 10)
+        result, remapped, _invalid = _remap_citations(text, mapping, 10)
         assert "[5]" in result
         assert "[3]" in result
         assert "[1]" not in result
@@ -171,14 +170,14 @@ class TestRemapCitations:
     def test_keeps_valid_numbers(self):
         text = "Source [3] says this."
         mapping = {}
-        result, remapped, invalid = _remap_citations(text, mapping, 5)
+        result, remapped, _invalid = _remap_citations(text, mapping, 5)
         assert "[3]" in result
         assert remapped == 0
 
     def test_remaps_out_of_range(self):
         text = "Source [15] and [20]."
         mapping = {}
-        result, remapped, invalid = _remap_citations(text, mapping, 5)
+        result, _remapped, _invalid = _remap_citations(text, mapping, 5)
         # Should remap to valid range
         import re
         cited = set(int(m) for m in re.findall(r"\[(\d+)\]", result))
@@ -186,7 +185,7 @@ class TestRemapCitations:
 
     def test_no_citations(self):
         text = "No citations here."
-        result, remapped, invalid = _remap_citations(text, {}, 5)
+        result, remapped, _invalid = _remap_citations(text, {}, 5)
         assert result == text
         assert remapped == 0
 

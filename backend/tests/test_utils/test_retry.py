@@ -1,8 +1,7 @@
 """Tests for HTTP retry utility (TEST-005)."""
 
-import pytest
 import httpx
-import respx
+import pytest
 
 from backend.app.utils.retry import with_http_retry
 
@@ -112,7 +111,7 @@ class TestWithHttpRetry:
     async def test_respects_retry_after_header(self) -> None:
         """429 with Retry-After header: delay should use header value, not backoff."""
         delays_used: list[float] = []
-        original_sleep = __import__("asyncio").sleep
+        _original_sleep = __import__("asyncio").sleep
 
         async def fake_sleep(delay: float) -> None:
             delays_used.append(delay)

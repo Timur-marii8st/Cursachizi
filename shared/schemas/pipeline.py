@@ -1,7 +1,6 @@
 """Pipeline-internal schemas for data flowing between stages."""
 
 from enum import StrEnum
-
 from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, Field

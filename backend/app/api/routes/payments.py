@@ -1,13 +1,12 @@
 """Payment API routes — Robokassa integration."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import structlog
 
 from backend.app.api.deps import get_db, verify_internal_api_key
 from backend.app.config import get_settings
@@ -120,7 +119,7 @@ async def robokassa_result(
         signature_value=signature_value,
     ):
         logger.warning("robokassa_invalid_signature", inv_id=inv_id)
-        return f"bad sign"
+        return "bad sign"
 
     # Find payment
     try:
@@ -131,7 +130,7 @@ async def robokassa_result(
     payment = await db.get(Payment, payment_id)
     if not payment:
         logger.warning("robokassa_payment_not_found", inv_id=inv_id)
-        return f"bad inv_id"
+        return "bad inv_id"
 
     if payment.status == PaymentStatus.COMPLETED:
         # Idempotent — already processed
@@ -139,7 +138,7 @@ async def robokassa_result(
 
     # Mark payment as completed
     payment.status = PaymentStatus.COMPLETED
-    payment.completed_at = datetime.now(timezone.utc)
+    payment.completed_at = datetime.now(UTC)
 
     # Add credits to user
     user = await db.get(User, payment.user_id)

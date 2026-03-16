@@ -1,9 +1,7 @@
 """Tests for reference extraction and renumbering."""
 
-import pytest
 
 from backend.app.pipeline.formatter.reference_extractor import (
-    RenumberingResult,
     _find_duplicate,
     _normalize_ref,
     _renumber_citations,
@@ -65,7 +63,7 @@ class TestSplitReferenceBlock:
             "\n"
             "[2] Kaplan, A. Siri, Siri... Business Horizons, 2019."
         )
-        refs, body = _split_reference_block(text)
+        refs, _body = _split_reference_block(text)
         assert len(refs) == 2
 
     def test_short_lines_not_refs(self):
@@ -74,7 +72,7 @@ class TestSplitReferenceBlock:
             "See [1] for details.\n"
             "[1] Short"
         )
-        refs, body = _split_reference_block(text)
+        refs, _body = _split_reference_block(text)
         # "Short" is only 5 chars, below the 15-char threshold
         assert len(refs) == 0
 

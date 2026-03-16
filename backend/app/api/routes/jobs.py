@@ -1,15 +1,14 @@
 """Job management API routes."""
 
-from datetime import datetime, timezone
-
+import asyncio
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from arq.connections import ArqRedis
-import asyncio
-
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import select, update as sql_update
+from sqlalchemy import select
+from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.deps import (
@@ -187,7 +186,7 @@ async def cancel_job(
             detail=f"Cannot cancel job in status: {job.status}",
         )
     job.status = JobStatus.CANCELLED
-    job.updated_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(job)
     return _job_to_response(job)
@@ -221,8 +220,8 @@ async def download_job_document(
             bucket=settings.s3_bucket_name,
             object_key=job.document_s3_key,
         )
-    except Exception:
-        raise HTTPException(status_code=502, detail="Failed to retrieve document from storage")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Failed to retrieve document from storage") from exc
 
     from urllib.parse import quote
 
@@ -293,7 +292,7 @@ async def upload_reference_template(
     )
 
     job.reference_s3_key = ref_key
-    job.updated_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(job)
 

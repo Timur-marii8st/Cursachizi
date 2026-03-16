@@ -1,8 +1,7 @@
 """Tests for BibliographyRegistry — unified bibliography from real sources."""
 
-import pytest
 
-from shared.schemas.pipeline import BibliographyEntry, BibliographyRegistry, Source
+from shared.schemas.pipeline import BibliographyRegistry, Source
 
 
 def _make_sources(n: int = 5) -> list[Source]:
@@ -101,7 +100,7 @@ class TestBibliographyRegistryFormatWithContent:
         # Third should only have title (no full text)
         lines = text.split("\n")
         # Find the line with [3] — it should just be the title
-        line3 = [l for l in lines if l.startswith("[3]")]
+        line3 = [line for line in lines if line.startswith("[3]")]
         assert len(line3) == 1
         assert "Full text content" not in line3[0]
 

@@ -190,7 +190,7 @@ class TestVisualTemplateMatcher:
             })
         ])
 
-        doc_bytes, template, results = await matcher.match_iteratively(
+        doc_bytes, _template, results = await matcher.match_iteratively(
             reference_docx_bytes=b"ref_docx",
             outline=sample_outline,
             sections=sample_sections,
@@ -222,7 +222,7 @@ class TestVisualTemplateMatcher:
         })
         vision_llm.set_responses([low_score_response, low_score_response])
 
-        doc_bytes, template, results = await matcher.match_iteratively(
+        _doc_bytes, _template, results = await matcher.match_iteratively(
             reference_docx_bytes=b"ref_docx",
             outline=sample_outline,
             sections=sample_sections,
@@ -249,7 +249,7 @@ class TestVisualTemplateMatcher:
             renderer=failing_renderer,
         )
 
-        doc_bytes, template, results = await matcher.match_iteratively(
+        doc_bytes, _template, results = await matcher.match_iteratively(
             reference_docx_bytes=b"ref_docx",
             outline=sample_outline,
             sections=sample_sections,

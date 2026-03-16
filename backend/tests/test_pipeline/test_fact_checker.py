@@ -249,7 +249,7 @@ class TestVerifierStage:
             SectionContent(chapter_number=99, section_title="Заключение", content="x " * 60),
         ]
 
-        result = await verifier.run(sections)
+        _result = await verifier.run(sections)
 
         # Only chapter 1 should be checked
         assert len(mock_llm.calls) == 1
