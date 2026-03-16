@@ -3,6 +3,7 @@
 import structlog
 
 from backend.app.pipeline.formatter.docx_generator import DocxGenerator
+from shared.schemas.job import WorkType
 from shared.schemas.pipeline import (
     BibliographyRegistry,
     FactCheckResult,
@@ -32,6 +33,7 @@ class FormatterStage:
         discipline: str = "",
         author: str = "",
         bibliography: BibliographyRegistry | None = None,
+        work_type: WorkType = WorkType.COURSEWORK,
     ) -> bytes:
         """Generate the final .docx document.
 
@@ -49,6 +51,7 @@ class FormatterStage:
             discipline=discipline,
             author=author,
             bibliography=bibliography,
+            work_type=work_type,
         )
 
         logger.info("formatting_stage_complete", size_kb=len(doc_bytes) // 1024)

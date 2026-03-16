@@ -581,8 +581,9 @@ class TestFullPipelineFlow:
         full_text = "\n".join(p.text for p in doc.paragraphs)
 
         assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" in full_text
-        # Fallback uses raw sources
-        assert "Source One" in full_text
+        # When no registry is provided, references extracted from section text
+        # take priority over raw sources
+        assert "Some reference" in full_text
 
 
 class TestEmptyBibliography:

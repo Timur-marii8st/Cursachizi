@@ -143,6 +143,13 @@ class PipelineOrchestrator:
         callback = callback or StageCallback()
         result = PipelineResult(started_at=datetime.now(UTC))
 
+        # Normalize work_type to enum for reliable comparison
+        try:
+            work_type_enum = WorkType(work_type)
+        except ValueError:
+            logger.warning("unknown_work_type_falling_back", work_type=work_type)
+            work_type_enum = WorkType.COURSEWORK
+
         try:
             # Stage 1: Research
             await callback.on_stage_start("researching", "Исследуем тему...")
@@ -190,7 +197,7 @@ class PipelineOrchestrator:
             )
 
             # Select writer stage based on work type
-            is_article = work_type == WorkType.ARTICLE
+            is_article = work_type_enum == WorkType.ARTICLE
             writer_stage = self._article_writer_stage if is_article else self._writer_stage
             work_label = "статьи" if is_article else "курсовой"
 
@@ -388,6 +395,7 @@ class PipelineOrchestrator:
                     university=university,
                     discipline=discipline,
                     bibliography=result.bibliography,
+                    work_type=work_type_enum,
                 )
             await callback.on_stage_complete(
                 "formatting",

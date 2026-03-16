@@ -11,6 +11,7 @@ from docx.shared import Mm, Pt, RGBColor
 from backend.app.pipeline.formatter.reference_extractor import (
     extract_and_renumber_references,
 )
+from shared.schemas.job import WorkType
 from shared.schemas.pipeline import (
     BibliographyRegistry,
     FactCheckResult,
@@ -19,6 +20,12 @@ from shared.schemas.pipeline import (
     Source,
 )
 from shared.schemas.template import GostTemplate
+
+# Title page labels per work type
+_WORK_TYPE_LABELS = {
+    WorkType.COURSEWORK: "КУРСОВАЯ РАБОТА",
+    WorkType.ARTICLE: "НАУЧНАЯ СТАТЬЯ",
+}
 
 logger = structlog.get_logger()
 
@@ -47,6 +54,7 @@ class DocxGenerator:
         discipline: str = "",
         author: str = "",
         bibliography: BibliographyRegistry | None = None,
+        work_type: WorkType = WorkType.COURSEWORK,
     ) -> bytes:
         """Generate a complete .docx document.
 
@@ -73,9 +81,11 @@ class DocxGenerator:
             sections_count=len(sections),
             sources_count=len(sources),
         )
+        collected_bibliography: list[str] | None = None
         if not (bibliography and bibliography.entries):
             ref_result = extract_and_renumber_references(sections)
             sections = ref_result.sections
+            collected_bibliography = ref_result.bibliography
 
         doc = Document()
 
@@ -83,7 +93,7 @@ class DocxGenerator:
         self._setup_page(doc)
 
         # Title page
-        self._add_title_page(doc, outline.title, university, discipline, author)
+        self._add_title_page(doc, outline.title, university, discipline, author, work_type)
 
         # Table of contents placeholder
         self._add_toc_placeholder(doc)
@@ -128,8 +138,8 @@ class DocxGenerator:
             self._add_body_text(doc, concl_text)
             doc.add_page_break()
 
-        # Bibliography — prefer registry (real sources), fall back to research sources
-        self._add_bibliography(doc, sources, bibliography=bibliography)
+        # Bibliography — prefer registry, then extracted inline refs, then raw sources
+        self._add_bibliography(doc, sources, collected_bibliography, bibliography)
 
         # Serialize to bytes
         buffer = io.BytesIO()
@@ -158,6 +168,7 @@ class DocxGenerator:
         university: str,
         discipline: str,
         author: str,
+        work_type: WorkType = WorkType.COURSEWORK,
     ) -> None:
         """Add a standard ГОСТ title page."""
         t = self._template
@@ -175,10 +186,11 @@ class DocxGenerator:
         for _ in range(4):
             doc.add_paragraph()
 
-        # "КУРСОВАЯ РАБОТА" label
+        # Work type label (dynamic based on work_type)
+        work_label = _WORK_TYPE_LABELS.get(work_type, "КУРСОВАЯ РАБОТА")
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run("КУРСОВАЯ РАБОТА")
+        run = p.add_run(work_label)
         run.font.name = t.body.font.name
         run.font.size = Pt(18)
         run.font.bold = True
@@ -388,29 +400,31 @@ class DocxGenerator:
         self,
         doc: Document,
         sources: list[Source],
+        collected_refs: list[str] | None = None,
         bibliography: BibliographyRegistry | None = None,
     ) -> None:
         """Add bibliography / references section.
 
-        Uses the bibliography registry (built from real research sources) when
-        available. Falls back to formatting raw Source objects.
+        Priority: registry > extracted inline refs > raw sources.
         Skips the entire section if there are no entries to render.
         """
         has_registry_entries = bibliography is not None and len(bibliography.entries) > 0
+        has_collected_refs = bool(collected_refs)
         has_sources = len(sources) > 0
 
         logger.info(
             "adding_bibliography",
             has_registry=bibliography is not None,
             registry_entries=len(bibliography.entries) if bibliography else 0,
+            collected_refs=len(collected_refs) if collected_refs else 0,
             fallback_sources=len(sources),
         )
 
         # Skip entire bibliography section if nothing to render
-        if not has_registry_entries and not has_sources:
+        if not has_registry_entries and not has_collected_refs and not has_sources:
             logger.warning(
                 "bibliography_empty_skipping_section",
-                reason="No bibliography entries and no fallback sources available",
+                reason="No bibliography entries, collected refs, or fallback sources available",
             )
             return
 
@@ -422,7 +436,13 @@ class DocxGenerator:
                 self._add_bib_entry(doc, f"{entry.number}. {entry.formatted_reference}")
             return
 
-        # Fallback to research sources (same format as registry would produce)
+        # Fallback to references extracted from section text
+        if has_collected_refs:
+            for i, ref_text in enumerate(collected_refs, 1):  # type: ignore[arg-type]
+                self._add_bib_entry(doc, f"{i}. {ref_text}")
+            return
+
+        # Last resort: raw research sources
         for i, source in enumerate(sources, 1):
             bib_entry = f"{i}. {source.title}"
             if source.url:
