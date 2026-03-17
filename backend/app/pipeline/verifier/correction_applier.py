@@ -189,6 +189,23 @@ class CorrectionApplier:
                     corrected_len=len(corrected),
                 )
                 return None
+
+            # Validate that citations [N] were preserved after rewrite
+            original_citations = set(re.findall(r"\[(\d+)\]", original_sentence))
+            corrected_citations = set(re.findall(r"\[(\d+)\]", corrected))
+            if original_citations and not corrected_citations:
+                logger.warning(
+                    "correction_lost_all_citations",
+                    original_citations=sorted(original_citations),
+                    sentence=original_sentence[:60],
+                )
+                # Re-append lost citations at the end of the corrected sentence
+                citation_str = " ".join(f"[{c}]" for c in sorted(original_citations, key=int))
+                if corrected.endswith("."):
+                    corrected = corrected[:-1] + f" {citation_str}."
+                else:
+                    corrected = corrected + f" {citation_str}"
+
             return corrected
         except Exception as e:
             logger.error("correction_rewrite_failed", error=str(e))

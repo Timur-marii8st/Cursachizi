@@ -88,6 +88,8 @@ class ArticleWriterStage:
             outline=outline,
             target_words=intro_words,
             model=model,
+            sources=research.sources,
+            bibliography=bibliography,
         )
         all_sections.append(intro)
         sections_done += 1
@@ -125,6 +127,8 @@ class ArticleWriterStage:
             sections=all_sections,
             target_words=conclusion_words,
             model=model,
+            sources=research.sources,
+            bibliography=bibliography,
         )
         all_sections.append(conclusion)
         sections_done += 1

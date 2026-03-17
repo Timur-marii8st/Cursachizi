@@ -9,7 +9,7 @@ import re
 import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider
-from shared.schemas.pipeline import Outline, SectionContent
+from shared.schemas.pipeline import BibliographyRegistry, Outline, SectionContent, Source
 
 logger = structlog.get_logger()
 
@@ -59,11 +59,16 @@ CONCLUSION_FIX_PROMPT = """Ты — опытный автор научных р�
 СТРУКТУРА РАБОТЫ:
 {outline_summary}
 
+РЕЕСТР ИСТОЧНИКОВ (при необходимости ссылайся по номерам [N]):
+{sources_text}
+
 ТРЕБОВАНИЯ:
 1. Устрани ТОЛЬКО указанные проблемы, органично встроив новые фрагменты в текст
 2. Сохрани существующий текст максимально без изменений
 3. Академический стиль (третье лицо, безличные конструкции)
 4. Каждый новый блок — отдельный абзац
+5. Сохрани все существующие ссылки [N] на источники
+6. НЕ выдумывай свои источники — используй ТОЛЬКО номера из реестра
 
 Напиши ТОЛЬКО полный текст заключения с исправленными недостатками."""
 
@@ -81,11 +86,17 @@ INTRO_FIX_PROMPT = """Ты — опытный автор научных рабо
 СТРУКТУРА РАБОТЫ:
 {outline_summary}
 
+РЕЕСТР ИСТОЧНИКОВ (используй для ссылок в формате [N]):
+{sources_text}
+
 ТРЕБОВАНИЯ:
 1. Добавь ТОЛЬКО недостающие элементы, органично встроив их в текст
 2. Сохрани существующий текст максимально без изменений
 3. Академический стиль (третье лицо, безличные конструкции)
 4. Каждый новый элемент — отдельный абзац или логический блок
+5. Сохрани все существующие ссылки [N] на источники
+6. При добавлении раздела «степень разработанности» используй ссылки [N] из реестра источников
+7. НЕ выдумывай свои источники — используй ТОЛЬКО номера из реестра
 
 Напиши ТОЛЬКО полный текст введения с добавленными элементами."""
 
@@ -125,6 +136,8 @@ class IntroductionConclusionValidator:
         discipline: str,
         outline: Outline,
         model: str | None = None,
+        sources: list[Source] | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> SectionContent:
         """Regenerate introduction to include missing elements."""
         if not missing_elements:
@@ -149,6 +162,14 @@ class IntroductionConclusionValidator:
             f"Глава {ch.number}: {ch.title}" for ch in outline.chapters
         )
 
+        # Build sources text for the prompt
+        if bibliography and bibliography.entries:
+            sources_text = bibliography.format_for_prompt()
+        elif sources:
+            sources_text = self._format_sources(sources)
+        else:
+            sources_text = "Источники не предоставлены."
+
         response = await self._llm.generate(
             messages=[LLMMessage(role="user", content=INTRO_FIX_PROMPT.format(
                 topic=topic,
@@ -156,6 +177,7 @@ class IntroductionConclusionValidator:
                 current_text=section.content,
                 missing_elements=missing_text,
                 outline_summary=outline_summary,
+                sources_text=sources_text,
             ))],
             model=model,
             temperature=0.5,
@@ -166,18 +188,21 @@ class IntroductionConclusionValidator:
         if not fixed_content:
             return section
 
+        # Re-extract citations from the fixed content
+        citations = list(set(re.findall(r"\[(\d+)\]", fixed_content)))
         logger.info(
             "intro_fixed",
             added_elements=missing_elements,
             old_words=section.word_count,
             new_words=len(fixed_content.split()),
+            citations=len(citations),
         )
 
         return SectionContent(
             chapter_number=0,
             section_title="Введение",
             content=fixed_content,
-            citations=section.citations,
+            citations=citations,
             word_count=len(fixed_content.split()),
         )
 
@@ -217,6 +242,8 @@ class IntroductionConclusionValidator:
         discipline: str,
         outline: Outline,
         model: str | None = None,
+        sources: list[Source] | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> SectionContent:
         """Regenerate conclusion to fix detected structural issues."""
         if not issues:
@@ -243,6 +270,14 @@ class IntroductionConclusionValidator:
             f"Глава {ch.number}: {ch.title}" for ch in outline.chapters
         )
 
+        # Build sources text for the prompt
+        if bibliography and bibliography.entries:
+            sources_text = bibliography.format_for_prompt()
+        elif sources:
+            sources_text = self._format_sources(sources)
+        else:
+            sources_text = "Источники не предоставлены."
+
         response = await self._llm.generate(
             messages=[LLMMessage(role="user", content=CONCLUSION_FIX_PROMPT.format(
                 topic=topic,
@@ -250,6 +285,7 @@ class IntroductionConclusionValidator:
                 current_text=section.content,
                 issues=issues_text,
                 outline_summary=outline_summary,
+                sources_text=sources_text,
             ))],
             model=model,
             temperature=0.5,
@@ -260,17 +296,28 @@ class IntroductionConclusionValidator:
         if not fixed_content:
             return section
 
+        # Re-extract citations from the fixed content
+        citations = list(set(re.findall(r"\[(\d+)\]", fixed_content)))
         logger.info(
             "conclusion_fixed",
             fixed_issues=issues,
             old_words=section.word_count,
             new_words=len(fixed_content.split()),
+            citations=len(citations),
         )
 
         return SectionContent(
             chapter_number=99,
             section_title="Заключение",
             content=fixed_content,
-            citations=section.citations,
+            citations=citations,
             word_count=len(fixed_content.split()),
         )
+
+    @staticmethod
+    def _format_sources(sources: list[Source]) -> str:
+        """Format raw sources for use in prompts."""
+        lines = []
+        for i, source in enumerate(sources[:8], 1):
+            lines.append(f"[{i}] {source.title}")
+        return "\n".join(lines) if lines else "Источники не предоставлены."

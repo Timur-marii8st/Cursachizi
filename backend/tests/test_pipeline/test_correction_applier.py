@@ -300,3 +300,95 @@ class TestApplyCorrections:
 
         assert applied == 0
         assert updated[0].content == "Текст."
+
+
+class TestCitationPreservation:
+    """Tests that CorrectionApplier preserves citations [N] during rewrites."""
+
+    async def test_preserves_citations_when_llm_keeps_them(
+        self, mock_llm: MockLLMProvider,
+    ) -> None:
+        """When LLM correctly preserves citations, they remain in text."""
+        original_text = (
+            "По данным McKinsey [1], 70% компаний внедряют технологии [2]. "
+            "Это подтверждается другими исследованиями."
+        )
+        corrected_sentence = (
+            "По данным McKinsey [1], 65% компаний внедряют технологии [2]."
+        )
+        mock_llm.set_responses([corrected_sentence])
+
+        sections = [_make_section("1.1 Обзор", original_text)]
+        claims = [_make_claim(
+            "70% компаний внедряют технологии",
+            section="1.1 Обзор",
+            correction="Показатель составляет 65%",
+        )]
+
+        applier = CorrectionApplier(mock_llm)
+        updated, applied = await applier.apply_corrections(
+            sections=sections, fact_check=_make_fact_check(claims),
+        )
+
+        assert applied == 1
+        assert "[1]" in updated[0].content
+        assert "[2]" in updated[0].content
+        assert "65%" in updated[0].content
+
+    async def test_restores_citations_when_llm_drops_them(
+        self, mock_llm: MockLLMProvider,
+    ) -> None:
+        """When LLM drops all citations, they should be re-appended."""
+        original_text = (
+            "По данным McKinsey [1], 70% компаний внедряют технологии. "
+            "Это подтверждается исследованиями."
+        )
+        # LLM drops the [1] citation
+        corrected_sentence = (
+            "По данным McKinsey, 65% компаний внедряют технологии."
+        )
+        mock_llm.set_responses([corrected_sentence])
+
+        sections = [_make_section("1.1 Обзор", original_text)]
+        claims = [_make_claim(
+            "70% компаний внедряют технологии",
+            section="1.1 Обзор",
+            correction="Показатель составляет 65%",
+        )]
+
+        applier = CorrectionApplier(mock_llm)
+        updated, applied = await applier.apply_corrections(
+            sections=sections, fact_check=_make_fact_check(claims),
+        )
+
+        assert applied == 1
+        assert "[1]" in updated[0].content
+        assert "65%" in updated[0].content
+
+    async def test_no_citation_restoration_when_original_had_none(
+        self, mock_llm: MockLLMProvider,
+    ) -> None:
+        """When original sentence had no citations, no restoration needed."""
+        original_text = (
+            "Рост рынка составил 80% в 2024 году. "
+            "Другие данные подтверждают тренд."
+        )
+        corrected_sentence = "Рост рынка составил 65% в 2024 году."
+        mock_llm.set_responses([corrected_sentence])
+
+        sections = [_make_section("1.1 Обзор", original_text)]
+        claims = [_make_claim(
+            "Рост рынка составил 80%",
+            section="1.1 Обзор",
+            correction="Рост составил 65%",
+        )]
+
+        applier = CorrectionApplier(mock_llm)
+        updated, applied = await applier.apply_corrections(
+            sections=sections, fact_check=_make_fact_check(claims),
+        )
+
+        assert applied == 1
+        assert "65%" in updated[0].content
+        # No spurious citations should appear
+        assert "[" not in updated[0].content.replace("65%", "")

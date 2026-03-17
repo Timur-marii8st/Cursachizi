@@ -95,6 +95,8 @@ class WriterStage:
             outline=outline,
             target_words=800,
             model=model,
+            sources=research.sources,
+            bibliography=bibliography,
         )
         all_sections.append(intro)
         sections_done += 1
@@ -136,6 +138,8 @@ class WriterStage:
             sections=all_sections,
             target_words=600,
             model=model,
+            sources=research.sources,
+            bibliography=bibliography,
         )
         all_sections.append(conclusion)
         sections_done += 1

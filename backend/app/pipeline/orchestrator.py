@@ -274,6 +274,8 @@ class PipelineOrchestrator:
                     outline=result.outline,
                     config=config,
                     callback=callback,
+                    sources=result.research.sources,
+                    bibliography=result.bibliography,
                 )
 
             # Stage 3c: Cross-section coherence check
@@ -571,6 +573,8 @@ class PipelineOrchestrator:
         outline: Outline,
         config: PipelineConfig,
         callback: StageCallback,
+        sources: list | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> list[SectionContent]:
         """Validate and fix introduction/conclusion structural elements."""
         updated = list(sections)
@@ -591,6 +595,8 @@ class PipelineOrchestrator:
                         discipline=discipline,
                         outline=outline,
                         model=config.writer_model,
+                        sources=sources,
+                        bibliography=bibliography,
                     )
 
             # Check conclusion
@@ -614,6 +620,8 @@ class PipelineOrchestrator:
                             discipline=discipline,
                             outline=outline,
                             model=config.writer_model,
+                            sources=sources,
+                            bibliography=bibliography,
                         )
 
         return updated

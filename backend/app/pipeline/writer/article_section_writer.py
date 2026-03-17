@@ -53,13 +53,19 @@ ARTICLE_INTRODUCTION_PROMPT = """Ты — опытный автор научны
 СТРУКТУРА СТАТЬИ:
 {outline_summary}
 
+РЕЕСТР ИСТОЧНИКОВ (используй для обзора литературы, ссылайся по номерам [N]):
+{sources_text}
+
 ТРЕБОВАНИЯ К ВВЕДЕНИЮ НАУЧНОЙ СТАТЬИ:
 1. Актуальность проблемы (1-2 абзаца, с опорой на современные исследования)
-2. Степень изученности проблемы (краткий обзор ключевых работ)
+2. Степень изученности проблемы (краткий обзор ключевых работ с ссылками [N] из реестра)
 3. Формулировка проблемы / исследовательского вопроса (чётко и конкретно)
 4. Цель исследования (1 предложение)
 5. Методы исследования (кратко)
 6. Научная новизна (чем данная работа отличается от существующих)
+7. Ссылки на источники ТОЛЬКО в формате [N], где N — номер из РЕЕСТРА ИСТОЧНИКОВ выше
+8. НЕ выдумывай свои источники — используй ТОЛЬКО номера из реестра
+9. НЕ добавляй список литературы / библиографию в конце раздела
 
 Объём: примерно {target_words} слов. Строгий научный стиль.
 НЕ используй markdown-разметку (**, ##, ` и т.д.) — пиши чистый текст.
@@ -96,14 +102,20 @@ ARTICLE_CONCLUSION_PROMPT = """Ты — опытный автор научных
 КРАТКОЕ СОДЕРЖАНИЕ РАЗДЕЛОВ:
 {sections_summary}
 
+РЕЕСТР ИСТОЧНИКОВ (при необходимости ссылайся по номерам [N]):
+{sources_text}
+
 ТРЕБОВАНИЯ К ЗАКЛЮЧЕНИЮ НАУЧНОЙ СТАТЬИ:
 1. Основные результаты исследования (по каждому разделу)
 2. Ответ на исследовательский вопрос / достижение цели
 3. Практическая и теоретическая значимость результатов
 4. Ограничения исследования
 5. Направления дальнейших исследований
-6. Объём: примерно {target_words} слов
-7. НЕ используй markdown-разметку (**, ##, ` и т.д.) — пиши чистый текст
+6. При упоминании конкретных данных используй ссылки [N] из реестра источников
+7. НЕ выдумывай свои источники — используй ТОЛЬКО номера из реестра
+8. Объём: примерно {target_words} слов
+9. НЕ используй markdown-разметку (**, ##, ` и т.д.) — пиши чистый текст
+10. НЕ добавляй список литературы / библиографию в конце
 
 Напиши ТОЛЬКО текст заключения."""
 
@@ -156,14 +168,25 @@ class ArticleSectionWriter:
         outline: Outline,
         target_words: int = 500,
         model: str | None = None,
+        sources: list[Source] | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> SectionContent:
         """Write the article introduction."""
         outline_summary = self._format_outline(outline)
+
+        # Build sources text for the introduction prompt
+        if bibliography and bibliography.entries:
+            sources_text = bibliography.format_for_prompt()
+        elif sources:
+            sources_text = self._format_sources(sources)
+        else:
+            sources_text = "Источники не предоставлены. НЕ используй ссылки [N] в тексте."
 
         prompt = ARTICLE_INTRODUCTION_PROMPT.format(
             topic=topic,
             discipline=discipline or "не указана",
             outline_summary=outline_summary,
+            sources_text=sources_text,
             target_words=target_words,
         )
 
@@ -175,12 +198,18 @@ class ArticleSectionWriter:
         )
 
         content = response.content.strip()
-        logger.info("article_introduction_written", words=len(content.split()))
+        citations = list(set(re.findall(r"\[(\d+)\]", content)))
+        logger.info(
+            "article_introduction_written",
+            words=len(content.split()),
+            citations=len(citations),
+        )
 
         return SectionContent(
             chapter_number=0,
             section_title="Введение",
             content=content,
+            citations=citations,
             word_count=len(content.split()),
         )
 
@@ -262,15 +291,26 @@ class ArticleSectionWriter:
         sections: list[SectionContent],
         target_words: int = 400,
         model: str | None = None,
+        sources: list[Source] | None = None,
+        bibliography: BibliographyRegistry | None = None,
     ) -> SectionContent:
         """Write the article conclusion."""
         conclusion_points = "\n".join(f"- {p}" for p in outline.conclusion_points)
         sections_summary = self._format_sections_summary(outline, sections)
 
+        # Build sources text for the conclusion prompt
+        if bibliography and bibliography.entries:
+            sources_text = bibliography.format_for_prompt()
+        elif sources:
+            sources_text = self._format_sources(sources)
+        else:
+            sources_text = "Источники не предоставлены. НЕ используй ссылки [N] в тексте."
+
         prompt = ARTICLE_CONCLUSION_PROMPT.format(
             topic=topic,
             conclusion_points=conclusion_points,
             sections_summary=sections_summary,
+            sources_text=sources_text,
             target_words=target_words,
         )
 
@@ -282,12 +322,18 @@ class ArticleSectionWriter:
         )
 
         content = response.content.strip()
-        logger.info("article_conclusion_written", words=len(content.split()))
+        citations = list(set(re.findall(r"\[(\d+)\]", content)))
+        logger.info(
+            "article_conclusion_written",
+            words=len(content.split()),
+            citations=len(citations),
+        )
 
         return SectionContent(
             chapter_number=99,
             section_title="Заключение",
             content=content,
+            citations=citations,
             word_count=len(content.split()),
         )
 
