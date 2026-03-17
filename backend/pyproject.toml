@@ -22,6 +22,8 @@ dependencies = [
     "boto3>=1.35.0",
     "python-multipart>=0.0.18",
     "structlog>=24.4.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
 ]
 
 [tool.setuptools.packages.find]

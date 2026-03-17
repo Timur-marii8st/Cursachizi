@@ -10,9 +10,8 @@ from backend.app.db.session import AsyncSessionLocal
 from backend.app.llm.factory import create_llm_provider
 from backend.app.llm.provider import LLMProvider
 from backend.app.pipeline.research.searcher import (
+    DuckDuckGoSearchProvider,
     SearchProvider,
-    SerperSearchProvider,
-    TavilySearchProvider,
 )
 
 # Atomic increment + conditional expire using Lua.
@@ -184,14 +183,12 @@ def get_vision_llm_provider(settings: Settings | None = None):
 
 
 def get_search_provider(settings: Settings | None = None) -> SearchProvider:
-    """Get the configured search provider."""
+    """Get the configured search provider.
+
+    DuckDuckGo is the default (free, no API key needed).
+    Serper is available as an alternative if explicitly configured.
+    """
     settings = settings or get_settings()
 
-    if settings.tavily_api_key:
-        return TavilySearchProvider(api_key=settings.tavily_api_key)
-    elif settings.serper_api_key:
-        return SerperSearchProvider(api_key=settings.serper_api_key)
-    else:
-        raise ValueError(
-            "No search provider configured. Set TAVILY_API_KEY or SERPER_API_KEY."
-        )
+    # DuckDuckGo is always the primary provider — free and keyless
+    return DuckDuckGoSearchProvider()

@@ -281,7 +281,7 @@ class PipelineConfig(BaseModel):
     writer_model: str = "google/google/gemini-3.1-flash-lite-preview"
     light_model: str = "stepfun/step-3.5-flash"
     vision_model: str = "google/google/gemini-3.1-flash-lite-preview"
-    search_provider: str = "tavily"
+    search_provider: str = "duckduckgo"
     timeout_seconds: int = Field(default=900, ge=120, le=3600)
 
     # Visual template matching
