@@ -10,6 +10,7 @@ from docx.shared import Mm, Pt, RGBColor
 
 from backend.app.pipeline.formatter.reference_extractor import (
     extract_and_renumber_references,
+    strip_reference_blocks,
 )
 from shared.schemas.pipeline import (
     BibliographyRegistry,
@@ -60,7 +61,9 @@ class ArticleDocxGenerator:
         # Citation fixing is done by the orchestrator before reaching the generator.
         # Legacy fallback when no bibliography registry is provided.
         collected_bibliography: list[str] | None = None
-        if not (bibliography and bibliography.entries):
+        if bibliography and bibliography.entries:
+            sections = strip_reference_blocks(sections)
+        else:
             ref_result = extract_and_renumber_references(sections)
             sections = ref_result.sections
             collected_bibliography = ref_result.bibliography
@@ -89,7 +92,8 @@ class ArticleDocxGenerator:
         intro_sections = [s for s in sections if s.section_title == "Введение"]
         if intro_sections:
             self._add_heading(doc, "Введение", level=1)
-            self._add_body_text(doc, intro_sections[0].content)
+            intro_text = self._strip_leading_heading(intro_sections[0].content, "Введение")
+            self._add_body_text(doc, intro_text)
 
         # Main sections (flat structure, no subsections)
         for chapter in outline.chapters:
@@ -100,13 +104,15 @@ class ArticleDocxGenerator:
             self._add_heading(doc, f"{chapter.number}. {chapter.title}", level=1)
 
             for section in chapter_sections:
-                self._add_body_text(doc, section.content)
+                body = self._strip_leading_heading(section.content, chapter.title)
+                self._add_body_text(doc, body)
 
         # Conclusion
         conclusion_sections = [s for s in sections if s.section_title == "Заключение"]
         if conclusion_sections:
             self._add_heading(doc, "Заключение", level=1)
-            self._add_body_text(doc, conclusion_sections[0].content)
+            concl_text = self._strip_leading_heading(conclusion_sections[0].content, "Заключение")
+            self._add_body_text(doc, concl_text)
 
         # References — prefer registry, then extracted inline refs, then raw sources
         self._add_bibliography(doc, sources, collected_bibliography, bibliography)
@@ -247,6 +253,82 @@ class ArticleDocxGenerator:
         text = re.sub(r"^\s*[-*•]\s+", "", text, flags=re.MULTILINE)
         text = re.sub(r"^\s*\d+[.)]\s+", "", text, flags=re.MULTILINE)
         text = re.sub(r"  +", " ", text)
+        return text
+
+    @staticmethod
+    def _strip_leading_heading(text: str, heading: str) -> str:
+        """Remove duplicate headings from the start of LLM-generated text.
+
+        Handles various formats (applied repeatedly until no more headings found):
+        - Exact heading match (case-insensitive): "ВВЕДЕНИЕ", "Теоретические основы"
+        - "РАЗДЕЛ: N.N Title" prefix
+        - "Глава N. Title" prefix
+        - Numbered patterns: "1.1 Title" or "1.1. Title"
+        """
+        heading_upper = heading.upper().strip()
+
+        heading_patterns = [
+            # "Глава N. Title" or "ГЛАВА N Title"
+            re.compile(r"^\s*(?:ГЛАВА|Глава)\s+\d+\.?\s*", re.IGNORECASE),
+            # "РАЗДЕЛ: N.N Title" or "Раздел N.N"
+            re.compile(r"^\s*(?:РАЗДЕЛ|Раздел)\s*:?\s*\d*\.?\d*\s*", re.IGNORECASE),
+            # "N.N Title" or "N.N. Title" at start
+            re.compile(r"^\s*\d+\.\d*\.?\s+"),
+        ]
+
+        max_passes = 5
+        for _ in range(max_passes):
+            stripped = text.lstrip()
+            if not stripped:
+                return text
+
+            changed = False
+
+            # Check for exact heading match (case-insensitive)
+            if stripped.upper().startswith(heading_upper):
+                after = stripped[len(heading_upper):]
+                after = after.lstrip(" \t\n\r.:;-—")
+                if after:
+                    text = after
+                    changed = True
+                    continue
+
+            # Check for "ВВЕДЕНИЕ" / "ЗАКЛЮЧЕНИЕ" style headings
+            for h in ["ВВЕДЕНИЕ", "ЗАКЛЮЧЕНИЕ"]:
+                if stripped.upper().startswith(h):
+                    after = stripped[len(h):].lstrip(" \t\n\r.:;-—")
+                    if after:
+                        text = after
+                        changed = True
+                        break
+            if changed:
+                continue
+
+            # Check for structured heading patterns
+            for pattern in heading_patterns:
+                m = pattern.match(stripped)
+                if m:
+                    after_prefix = stripped[m.end():]
+                    # Check if remaining text starts with the heading title
+                    if after_prefix.upper().startswith(heading_upper):
+                        after = after_prefix[len(heading_upper):]
+                        after = after.lstrip(" \t\n\r.:;-—")
+                        if after:
+                            text = after
+                            changed = True
+                            break
+                    # Even if no exact match, strip the whole first line
+                    first_newline = stripped.find("\n")
+                    if first_newline > 0:
+                        after = stripped[first_newline:].lstrip("\n\r")
+                        if after:
+                            text = after
+                            changed = True
+                            break
+
+            if not changed:
+                break
+
         return text
 
     def _add_body_text(self, doc: Document, text: str) -> None:

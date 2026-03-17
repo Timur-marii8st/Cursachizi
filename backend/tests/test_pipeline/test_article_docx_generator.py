@@ -426,3 +426,135 @@ class TestArticleEmptyBibliography:
         text = "\n".join(p.text for p in doc.paragraphs)
 
         assert "СПИСОК ЛИТЕРАТУРЫ" not in text
+
+
+class TestArticleBibliographyEndToEnd:
+    """Critical integration tests: sources must appear in article bibliography."""
+
+    def test_article_bibliography_with_registry(self):
+        """BibliographyRegistry entries appear in СПИСОК ЛИТЕРАТУРЫ."""
+        from backend.app.pipeline.research.ranker import SourceRanker
+
+        sources = [
+            Source(url="https://cyberleninka.ru/1", title="Методы NLP",
+                   full_text="Текст " * 50, relevance_score=0.9, is_academic=True),
+            Source(url="https://elibrary.ru/2", title="Нейросети в обработке данных",
+                   full_text="", relevance_score=0.6, is_academic=True),
+            Source(url="https://habr.com/3", title="Обзор алгоритмов ML",
+                   full_text="Текст " * 30, relevance_score=0.7),
+        ]
+
+        ranker = SourceRanker()
+        ranked = ranker.rank_and_filter(sources)
+        registry = BibliographyRegistry.from_sources(ranked)
+        assert len(registry.entries) == 3
+
+        outline = Outline(title="ML методы", chapters=[
+            OutlineChapter(number=1, title="Теория", description=""),
+        ])
+        sections = [
+            SectionContent(chapter_number=0, section_title="Введение",
+                           content="Актуальность [1] и [2].", word_count=4),
+            SectionContent(chapter_number=1, section_title="Теория",
+                           content="Методы [1] и подходы [3].", word_count=5),
+            SectionContent(chapter_number=99, section_title="Заключение",
+                           content="Итоги [1].", word_count=2),
+        ]
+
+        gen = ArticleDocxGenerator()
+        doc_bytes = gen.generate(outline=outline, sections=sections,
+                                 sources=ranked, bibliography=registry)
+        doc = Document(io.BytesIO(doc_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ЛИТЕРАТУРЫ" in full_text
+        bib_text = full_text[full_text.find("СПИСОК ЛИТЕРАТУРЫ"):]
+        assert "Методы NLP" in bib_text
+        assert "Нейросети в обработке данных" in bib_text
+        assert "Обзор алгоритмов ML" in bib_text
+        assert "[Электронный ресурс]" in bib_text
+
+    def test_article_strips_duplicate_headings(self):
+        """Duplicate headings from LLM output are stripped."""
+        outline = Outline(title="Тест", chapters=[
+            OutlineChapter(number=1, title="Теоретические основы", description=""),
+        ])
+        sections = [
+            SectionContent(chapter_number=0, section_title="Введение",
+                           content="Введение\nТекст.", word_count=2),
+            SectionContent(chapter_number=1, section_title="Теоретические основы",
+                           content="Теоретические основы\nГлава 1. Теоретические основы\nТекст.",
+                           word_count=4),
+            SectionContent(chapter_number=99, section_title="Заключение",
+                           content="ЗАКЛЮЧЕНИЕ\nВыводы.", word_count=2),
+        ]
+        sources = [Source(url="https://x.com", title="Src")]
+        registry = BibliographyRegistry.from_sources(sources)
+
+        gen = ArticleDocxGenerator()
+        doc_bytes = gen.generate(outline=outline, sections=sections,
+                                 sources=sources, bibliography=registry)
+        doc = Document(io.BytesIO(doc_bytes))
+        texts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+
+        heading_count = sum(1 for t in texts
+                            if "Теоретические основы" in t and len(t) < 50)
+        assert heading_count == 1, \
+            f"Heading appears {heading_count} times, expected 1"
+
+    def test_article_full_pipeline_with_citation_fixer(self):
+        """Full pipeline: research -> registry -> fix_citations -> article docx."""
+        from backend.app.pipeline.research.ranker import SourceRanker
+        from backend.app.pipeline.writer.citation_fixer import fix_citations
+
+        research_sources = [
+            Source(url="https://cyberleninka.ru/pravo-1",
+                   title="Ответственность в цифровую эпоху",
+                   full_text="Текст " * 30, relevance_score=0.9, is_academic=True),
+            Source(url="https://consultant.ru/doc/1",
+                   title="ФЗ О персональных данных",
+                   full_text="", relevance_score=0.7),
+            Source(url="https://elibrary.ru/ai-law",
+                   title="Регулирование ИИ",
+                   full_text="Анализ " * 20, relevance_score=0.8, is_academic=True),
+        ]
+
+        ranker = SourceRanker()
+        ranked = ranker.rank_and_filter(research_sources)
+        registry = BibliographyRegistry.from_sources(ranked)
+        assert len(registry.entries) == 3
+
+        sections = [
+            SectionContent(chapter_number=0, section_title="Введение",
+                           content="Проблема ИИ [1] актуальна [2].", word_count=6),
+            SectionContent(chapter_number=1, section_title="Правовые основы",
+                           content=(
+                               "Анализ [1] показывает пробелы [2] и [3].\n\n"
+                               "Список литературы:\n"
+                               "[1] Фейковый А.А. Книга. М., 2023.\n"
+                               "[2] Fake B. Article. NY, 2022."
+                           ), word_count=15),
+            SectionContent(chapter_number=99, section_title="Заключение",
+                           content="Итоги [1].", word_count=2),
+        ]
+
+        fixed = fix_citations(sections, registry)
+        for s in fixed:
+            assert "Фейковый" not in s.content
+
+        outline = Outline(title="Регулирование ИИ", chapters=[
+            OutlineChapter(number=1, title="Правовые основы", description=""),
+        ])
+
+        gen = ArticleDocxGenerator()
+        doc_bytes = gen.generate(outline=outline, sections=fixed,
+                                 sources=ranked, bibliography=registry)
+        doc = Document(io.BytesIO(doc_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+
+        assert "СПИСОК ЛИТЕРАТУРЫ" in full_text
+        bib_text = full_text[full_text.find("СПИСОК ЛИТЕРАТУРЫ"):]
+        assert "Ответственность в цифровую эпоху" in bib_text
+        assert "ФЗ О персональных данных" in bib_text
+        assert "Регулирование ИИ" in bib_text
+        assert "Фейковый" not in bib_text
