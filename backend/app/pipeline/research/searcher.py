@@ -37,6 +37,7 @@ class TavilySearchProvider(SearchProvider):
         self._client = httpx.AsyncClient(
             timeout=30.0,
             limits=httpx.Limits(max_connections=5, max_keepalive_connections=3),
+            headers={"Authorization": f"Bearer {api_key}"},
         )
 
     async def aclose(self) -> None:
@@ -47,7 +48,6 @@ class TavilySearchProvider(SearchProvider):
             response = await self._client.post(
                 self.API_URL,
                 json={
-                    "api_key": self._api_key,
                     "query": query,
                     "max_results": max_results,
                     "search_depth": "advanced",
