@@ -50,7 +50,7 @@ class TestBibliographyRegistryFromSources:
         source = Source(url="", title="Book Title", snippet="A book")
         registry = BibliographyRegistry.from_sources([source])
 
-        assert registry.entries[0].formatted_reference == "Book Title"
+        assert registry.entries[0].formatted_reference == "Book Title."
         assert "[Электронный ресурс]" not in registry.entries[0].formatted_reference
 
     def test_empty_sources(self):

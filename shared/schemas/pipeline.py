@@ -1,5 +1,6 @@
 """Pipeline-internal schemas for data flowing between stages."""
 
+from datetime import date
 from enum import StrEnum
 from typing import Annotated
 
@@ -103,10 +104,15 @@ class BibliographyRegistry(BaseModel):
             unique_sources.append(source)
 
         entries = []
+        today = date.today().strftime("%d.%m.%Y")
         for i, source in enumerate(unique_sources, 1):
-            ref = source.title
             if source.url:
-                ref += f" [Электронный ресурс]. — URL: {source.url}"
+                ref = (
+                    f"{source.title} [Электронный ресурс]. "
+                    f"— URL: {source.url} (дата обращения: {today})"
+                )
+            else:
+                ref = f"{source.title}."
             entries.append(BibliographyEntry(
                 number=i,
                 title=source.title,

@@ -12,14 +12,29 @@ def ranker() -> SourceRanker:
 
 
 class TestSourceRanker:
-    def test_filters_empty_content(self, ranker: SourceRanker) -> None:
+    def test_keeps_sources_without_content_but_ranks_lower(self, ranker: SourceRanker) -> None:
+        """Sources without full_text are preserved (for bibliography) but rank lower."""
         sources = [
             Source(url="https://a.com", title="A", full_text="Short"),
             Source(
                 url="https://b.com",
                 title="B",
                 full_text="This has enough content to pass the filter " * 5,
+                relevance_score=0.5,
             ),
+        ]
+
+        result = ranker.rank_and_filter(sources)
+        # Both sources kept — short content source ranks lower
+        assert len(result) == 2
+        assert result[0].title == "B"  # longer content + higher relevance ranks higher
+        assert result[1].title == "A"  # short content ranks lower
+
+    def test_filters_sources_with_no_title_and_no_url(self, ranker: SourceRanker) -> None:
+        """Sources with neither title nor url are truly useless and removed."""
+        sources = [
+            Source(url="", title="", full_text="Some text"),
+            Source(url="https://b.com", title="B", full_text=""),
         ]
 
         result = ranker.rank_and_filter(sources)

@@ -33,10 +33,12 @@ class SourceRanker:
         Returns:
             Filtered, deduplicated, and ranked source list.
         """
-        # Step 1: Remove sources with no useful content
+        # Step 1: Remove truly useless sources (no title AND no url)
+        # Sources without full_text are kept for bibliography (title+url+snippet)
+        # but will score lower in ranking
         filtered = [
             s for s in sources
-            if s.full_text and len(s.full_text) >= self._min_content_length
+            if s.title or s.url
         ]
 
         # Step 2: Deduplicate by URL (normalize)
@@ -69,7 +71,7 @@ class SourceRanker:
         score = source.relevance_score * 0.5  # Search provider relevance
 
         # Content length bonus (logarithmic, caps at ~5000 chars)
-        text_len = len(source.full_text)
+        text_len = len(source.full_text) if source.full_text else 0
         if text_len > 500:
             length_bonus = min(text_len / 5000, 1.0) * 0.3
             score += length_bonus

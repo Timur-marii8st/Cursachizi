@@ -650,3 +650,212 @@ class TestEmptyBibliography:
         text = "\n".join(p.text for p in doc.paragraphs)
 
         assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" not in text
+
+
+class TestBibliographyWithScrapedAndUnscrapedSources:
+    """Tests for the critical scenario where some sources failed to scrape
+    but should still appear in the bibliography (title + URL are valid)."""
+
+    def test_sources_without_fulltext_still_in_bibliography(self):
+        """Sources that failed to scrape (no full_text) must still appear in bibliography."""
+        from backend.app.pipeline.research.ranker import SourceRanker
+
+        sources = [
+            Source(
+                url="https://scraped.com/article",
+                title="Успешно скачанная статья",
+                full_text="Длинный текст статьи " * 50,
+                relevance_score=0.8,
+            ),
+            Source(
+                url="https://blocked.com/page",
+                title="Заблокированный сайт",
+                full_text="",  # scraping failed
+                relevance_score=0.5,
+            ),
+            Source(
+                url="https://timeout.com/research",
+                title="Таймаут при скачивании",
+                full_text="Short",  # too short to be useful for writing
+                relevance_score=0.6,
+            ),
+        ]
+
+        # Ranker should preserve all 3 sources (they all have title + url)
+        ranker = SourceRanker()
+        ranked = ranker.rank_and_filter(sources)
+        assert len(ranked) == 3
+
+        # Build bibliography — all 3 sources must be present
+        registry = BibliographyRegistry.from_sources(ranked)
+        assert len(registry.entries) == 3
+
+        # Generate docx with this registry
+        generator = DocxGenerator()
+        outline = Outline(
+            title="Тестовая работа",
+            chapters=[
+                OutlineChapter(number=1, title="Глава 1", subsections=["1.1 Раздел"]),
+            ],
+        )
+        sections = [
+            SectionContent(
+                chapter_number=0, section_title="Введение",
+                content="Актуальность темы [1] и [2].", word_count=5,
+            ),
+            SectionContent(
+                chapter_number=1, section_title="1.1 Раздел",
+                content="Текст раздела [1] и [3].", word_count=5,
+            ),
+            SectionContent(
+                chapter_number=99, section_title="Заключение",
+                content="Выводы.", word_count=1,
+            ),
+        ]
+
+        doc_bytes = generator.generate(
+            outline=outline, sections=sections,
+            sources=ranked, bibliography=registry,
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+
+        # ALL three sources must appear in bibliography
+        assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" in full_text
+        bib_start = full_text.find("СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ")
+        bib_text = full_text[bib_start:]
+
+        assert "Успешно скачанная статья" in bib_text
+        assert "Заблокированный сайт" in bib_text
+        assert "Таймаут при скачивании" in bib_text
+        assert "[Электронный ресурс]" in bib_text
+        assert "дата обращения:" in bib_text
+
+    def test_full_pipeline_sources_survive_all_stages(self):
+        """Simulate the complete pipeline: research -> ranker -> registry -> citations -> docx.
+
+        This is the most critical integration test: it verifies that sources
+        collected during research make it all the way to the final document's
+        bibliography section, even when some sources failed to scrape.
+        """
+        from backend.app.pipeline.research.ranker import SourceRanker
+        from backend.app.pipeline.writer.citation_fixer import fix_citations
+
+        # Step 1: Simulate research results (mix of scraped and unscraped)
+        research_sources = [
+            Source(
+                url="https://cyberleninka.ru/article/1",
+                title="Анализ современных подходов к менеджменту",
+                full_text="Полный текст статьи с киберленинки " * 30,
+                relevance_score=0.9,
+                is_academic=True,
+            ),
+            Source(
+                url="https://habr.com/article/2",
+                title="Обзор технологий управления",
+                full_text="Текст с хабра " * 20,
+                relevance_score=0.7,
+            ),
+            Source(
+                url="https://elibrary.ru/item/3",
+                title="Кадровый потенциал организации",
+                full_text="",  # blocked by paywall
+                relevance_score=0.6,
+                is_academic=True,
+            ),
+            Source(
+                url="https://rbc.ru/article/4",
+                title="Новости экономики и бизнеса",
+                full_text="Кор",  # too short
+                relevance_score=0.4,
+            ),
+        ]
+
+        # Step 2: Ranker filters and ranks (should keep all 4)
+        ranker = SourceRanker()
+        ranked = ranker.rank_and_filter(research_sources)
+        assert len(ranked) == 4, f"Expected 4 sources, got {len(ranked)}"
+
+        # Step 3: Build bibliography registry
+        registry = BibliographyRegistry.from_sources(ranked)
+        assert len(registry.entries) == 4, f"Expected 4 entries, got {len(registry.entries)}"
+
+        # Step 4: Simulate LLM writing with fake bibliography blocks
+        sections = [
+            SectionContent(
+                chapter_number=0, section_title="Введение",
+                content=(
+                    "Актуальность темы управления подтверждается исследованиями [1] и [2]. "
+                    "Кадровый потенциал рассмотрен в работе [3]."
+                ),
+                word_count=15,
+            ),
+            SectionContent(
+                chapter_number=1, section_title="1.1 Теория менеджмента",
+                content=(
+                    "Современные подходы [1] включают цифровизацию [2]. "
+                    "Экономические аспекты описаны в [4].\n\n"
+                    "Список литературы:\n"
+                    "[1] Выдуманный А.А. Книга. — М., 2023.\n"
+                    "[2] Fake B.B. Another book. — NY, 2022."
+                ),
+                word_count=20,
+            ),
+            SectionContent(
+                chapter_number=99, section_title="Заключение",
+                content="Работа показала важность управления [1].",
+                word_count=5,
+            ),
+        ]
+
+        # Step 5: Fix citations (strips fake blocks, remaps numbers)
+        fixed = fix_citations(sections, registry)
+
+        # Verify fake blocks stripped
+        for s in fixed:
+            assert "Выдуманный" not in s.content
+            assert "Fake B.B." not in s.content
+            assert "Список литературы" not in s.content
+
+        # Step 6: Generate DOCX
+        generator = DocxGenerator()
+        outline = Outline(
+            title="Управление персоналом в цифровую эпоху",
+            chapters=[
+                OutlineChapter(
+                    number=1, title="Теория менеджмента",
+                    subsections=["1.1 Теория менеджмента"],
+                ),
+            ],
+        )
+
+        doc_bytes = generator.generate(
+            outline=outline, sections=fixed,
+            sources=ranked, bibliography=registry,
+        )
+
+        # Step 7: Parse and verify final document
+        doc = Document(io.BytesIO(doc_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+
+        # Bibliography section must exist
+        assert "СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ" in full_text, \
+            "Bibliography section missing from final document!"
+
+        bib_start = full_text.find("СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ")
+        bib_text = full_text[bib_start:]
+
+        # ALL 4 real research sources must be in bibliography
+        assert "Анализ современных подходов к менеджменту" in bib_text
+        assert "Обзор технологий управления" in bib_text
+        assert "Кадровый потенциал организации" in bib_text
+        assert "Новости экономики и бизнеса" in bib_text
+
+        # GOST formatting checks
+        assert "[Электронный ресурс]" in bib_text
+        assert "дата обращения:" in bib_text
+
+        # Fake sources must NOT be present
+        assert "Выдуманный" not in bib_text
+        assert "Fake B.B." not in bib_text

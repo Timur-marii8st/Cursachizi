@@ -10,6 +10,7 @@ from docx.shared import Mm, Pt, RGBColor
 
 from backend.app.pipeline.formatter.reference_extractor import (
     extract_and_renumber_references,
+    strip_reference_blocks,
 )
 from shared.schemas.job import WorkType
 from shared.schemas.pipeline import (
@@ -81,8 +82,13 @@ class DocxGenerator:
             sections_count=len(sections),
             sources_count=len(sources),
         )
+        # Always strip residual bibliography blocks from sections
         collected_bibliography: list[str] | None = None
-        if not (bibliography and bibliography.entries):
+        if bibliography and bibliography.entries:
+            # Strip bibliography blocks but keep the real registry
+            sections = strip_reference_blocks(sections)
+            collected_bibliography = None
+        else:
             ref_result = extract_and_renumber_references(sections)
             sections = ref_result.sections
             collected_bibliography = ref_result.bibliography
@@ -408,23 +414,26 @@ class DocxGenerator:
         Priority: registry > extracted inline refs > raw sources.
         Skips the entire section if there are no entries to render.
         """
+        logger.info(
+            "bibliography_input_received",
+            bibliography_type=type(bibliography).__name__ if bibliography else "None",
+            registry_entries=len(bibliography.entries) if bibliography and bibliography.entries else 0,
+            collected_refs_count=len(collected_refs) if collected_refs else 0,
+            fallback_sources_count=len(sources),
+            bibliography_is_none=bibliography is None,
+        )
+
         has_registry_entries = bibliography is not None and len(bibliography.entries) > 0
         has_collected_refs = bool(collected_refs)
         has_sources = len(sources) > 0
 
-        logger.info(
-            "adding_bibliography",
-            has_registry=bibliography is not None,
-            registry_entries=len(bibliography.entries) if bibliography else 0,
-            collected_refs=len(collected_refs) if collected_refs else 0,
-            fallback_sources=len(sources),
-        )
-
-        # Skip entire bibliography section if nothing to render
+        # Safety net: bibliography should ALWAYS appear in the document
         if not has_registry_entries and not has_collected_refs and not has_sources:
-            logger.warning(
-                "bibliography_empty_skipping_section",
-                reason="No bibliography entries, collected refs, or fallback sources available",
+            logger.error(
+                "BIBLIOGRAPHY_MISSING",
+                reason="No bibliography entries, collected refs, or fallback sources available. "
+                "This is unexpected — every document should have a bibliography section. "
+                "Check pipeline stages: bibliography registry may not have been passed through.",
             )
             return
 
