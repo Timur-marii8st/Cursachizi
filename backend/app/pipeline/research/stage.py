@@ -53,19 +53,22 @@ class ResearchStage:
         logger.info("research_stage_start", topic=topic[:80])
 
         # Step 1: Expand topic into multiple search queries
+        # Use 10 diverse queries to maximize source coverage for 20-30 source papers
         queries = await self._query_expander.expand(
             topic=topic,
             discipline=discipline,
-            count=6,
+            count=10,
             model=config.light_model,
         )
 
         # Step 2: Search across all queries
+        # Guarantee at least 5 results per query regardless of total budget
         all_sources = []
+        per_query = max(config.max_search_results // len(queries), 5)
         for query in queries:
             results = await self._search_provider.search(
                 query=query,
-                max_results=config.max_search_results // len(queries) + 1,
+                max_results=per_query,
             )
             all_sources.extend(results)
 

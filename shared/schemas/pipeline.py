@@ -273,8 +273,8 @@ class SectionEvaluation(BaseModel):
 class PipelineConfig(BaseModel):
     """Configuration for a single pipeline run."""
 
-    max_search_results: int = Field(default=40, ge=5, le=100)
-    max_sources: int = Field(default=25, ge=5, le=50)
+    max_search_results: int = Field(default=60, ge=5, le=200)
+    max_sources: int = Field(default=30, ge=5, le=80)
     max_tokens_per_section: int = Field(default=4000, ge=1000, le=8000)
     enable_fact_check: bool = True
     max_claims_per_chapter: int = Field(default=5, ge=1, le=20)

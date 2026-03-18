@@ -69,8 +69,8 @@ class Settings(BaseSettings):
     trusted_proxy_ips: str = ""
 
     # Pipeline
-    max_search_results: int = 20
-    max_sources_per_topic: int = 15
+    max_search_results: int = 60
+    max_sources_per_topic: int = 30
     max_tokens_per_section: int = 4000
     pipeline_timeout_seconds: int = 900
 
