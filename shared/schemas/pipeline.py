@@ -135,7 +135,7 @@ class BibliographyRegistry(BaseModel):
         return "\n".join(lines)
 
     def format_with_content(
-        self, sources: list["Source"], max_content_entries: int = 8
+        self, sources: list["Source"], max_content_entries: int = 15
     ) -> str:
         """Format registry with source content for section writing prompts.
 
@@ -273,8 +273,8 @@ class SectionEvaluation(BaseModel):
 class PipelineConfig(BaseModel):
     """Configuration for a single pipeline run."""
 
-    max_search_results: int = Field(default=20, ge=5, le=50)
-    max_sources: int = Field(default=15, ge=5, le=30)
+    max_search_results: int = Field(default=40, ge=5, le=100)
+    max_sources: int = Field(default=25, ge=5, le=50)
     max_tokens_per_section: int = Field(default=4000, ge=1000, le=8000)
     enable_fact_check: bool = True
     max_claims_per_chapter: int = Field(default=5, ge=1, le=20)
@@ -295,5 +295,5 @@ class PipelineConfig(BaseModel):
     enable_coherence_check: bool = True
     enable_section_rewrite: bool = True
     max_section_rewrites: int = Field(default=2, ge=0, le=5)
-    min_citations_per_section: int = Field(default=2, ge=0, le=10)
+    min_citations_per_section: int = Field(default=4, ge=0, le=15)
     enable_humanizer: bool = False
