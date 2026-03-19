@@ -39,12 +39,15 @@ SECTION_PROMPT = """Ты — опытный автор научных работ
 РЕЕСТР ИСТОЧНИКОВ (используй ТОЛЬКО эти источники, ссылайся по их номерам [N]):
 {sources_text}
 
+ОБЯЗАТЕЛЬНЫЕ ИСТОЧНИКИ ДЛЯ ЭТОГО РАЗДЕЛА:
+{required_sources}
+
 ТРЕБОВАНИЯ:
 1. Академический стиль изложения (третье лицо, безличные конструкции)
 2. Логичная структура: тезис → аргументация → вывод
 3. Ссылки на источники ТОЛЬКО в формате [N], где N — номер из РЕЕСТРА ИСТОЧНИКОВ выше
 4. НЕ выдумывай свои источники — используй ТОЛЬКО номера из реестра
-5. ОБЯЗАТЕЛЬНО используй минимум 4-6 РАЗНЫХ источников из реестра в каждом разделе. Каждый абзац должен содержать хотя бы одну ссылку [N]. Распределяй ссылки равномерно по всему тексту, используя как можно больше разных номеров из реестра
+5. ОБЯЗАТЕЛЬНО используй ВСЕ источники из списка «ОБЯЗАТЕЛЬНЫЕ ИСТОЧНИКИ ДЛЯ ЭТОГО РАЗДЕЛА» — каждый из них должен быть процитирован хотя бы один раз в формате [N]. Также можешь использовать другие источники из реестра. Распределяй ссылки равномерно по всему тексту
 6. Объём: примерно {target_words} слов
 7. Не используй маркированные списки — только связный текст с абзацами
 8. Каждый абзац начинается с красной строки
@@ -186,6 +189,7 @@ class SectionWriter:
         additional_instructions: str = "",
         model: str | None = None,
         bibliography: BibliographyRegistry | None = None,
+        required_source_nums: list[int] | None = None,
     ) -> SectionContent:
         """Write a single chapter section."""
         # Build context from previous sections (last 2 for continuity)
@@ -216,6 +220,17 @@ class SectionWriter:
                 _safe(additional_instructions) or "Нет дополнительных инструкций."
             )
 
+        # Format required sources instruction
+        if required_source_nums and bibliography and bibliography.entries:
+            req_lines = []
+            for num in required_source_nums:
+                entry = bibliography.get_entry(num)
+                if entry:
+                    req_lines.append(f"[{entry.number}] {entry.title}")
+            required_sources_text = "\n".join(req_lines) if req_lines else "Нет обязательных."
+        else:
+            required_sources_text = "Используй как можно больше разных источников из реестра."
+
         prompt = SECTION_PROMPT.format(
             paper_title=_safe(paper_title),
             chapter_number=chapter.number,
@@ -223,6 +238,7 @@ class SectionWriter:
             section_title=_safe(section_title),
             previous_context=previous_context,
             sources_text=sources_text,
+            required_sources=required_sources_text,
             target_words=target_words,
             additional_instructions=effective_instructions,
         )

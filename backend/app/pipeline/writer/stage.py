@@ -109,11 +109,25 @@ class WriterStage:
         total_subsections = sum(max(len(ch.subsections), 1) for ch in outline.chapters)
         words_per_section = (body_pages * 250) // max(total_subsections, 1)  # ~250 words/page
 
+        # Distribute bibliography entries across body sections so each section
+        # cites DIFFERENT sources — this ensures broad source coverage (15-30).
+        body_section_titles: list[tuple] = []  # (chapter, section_title)
+        for ch in outline.chapters:
+            for st in (ch.subsections if ch.subsections else [ch.title]):
+                body_section_titles.append((ch, st))
+
+        source_assignments = self._assign_sources_to_sections(
+            bibliography, len(body_section_titles)
+        )
+
+        body_idx = 0
         for chapter in outline.chapters:
             logger.info("writing_chapter", chapter=chapter.number, title=chapter.title[:50])
             sections_to_write = chapter.subsections if chapter.subsections else [chapter.title]
 
             for section_title in sections_to_write:
+                required_nums = source_assignments[body_idx] if body_idx < len(source_assignments) else []
+                body_idx += 1
                 section = await self._section_writer.write_section(
                     paper_title=outline.title,
                     chapter=chapter,
@@ -124,6 +138,7 @@ class WriterStage:
                     additional_instructions=additional_instructions,
                     model=model,
                     bibliography=bibliography,
+                    required_source_nums=required_nums,
                 )
                 all_sections.append(section)
                 sections_done += 1
@@ -154,3 +169,45 @@ class WriterStage:
         )
 
         return all_sections
+
+    @staticmethod
+    def _assign_sources_to_sections(
+        bibliography: BibliographyRegistry | None,
+        num_sections: int,
+    ) -> list[list[int]]:
+        """Distribute bibliography entry numbers across body sections.
+
+        Each section gets a unique slice of sources so that, collectively, all
+        sections cover the entire registry. Sources are dealt round-robin and
+        each section receives at least 3 required sources.
+        """
+        if not bibliography or not bibliography.entries or num_sections == 0:
+            return [[] for _ in range(num_sections)]
+
+        all_nums = [e.number for e in bibliography.entries]
+        assignments: list[list[int]] = [[] for _ in range(num_sections)]
+
+        # Round-robin deal: give each section its own slice
+        for i, num in enumerate(all_nums):
+            assignments[i % num_sections].append(num)
+
+        # Ensure each section has at least 3 sources (wrap around if needed)
+        min_per_section = min(3, len(all_nums))
+        for i, assigned in enumerate(assignments):
+            while len(assigned) < min_per_section:
+                # Add sources from the pool that aren't already assigned
+                for num in all_nums:
+                    if num not in assigned:
+                        assigned.append(num)
+                        break
+                else:
+                    break
+
+        logger.info(
+            "sources_distributed",
+            total_sources=len(all_nums),
+            sections=num_sections,
+            per_section=[len(a) for a in assignments],
+        )
+
+        return assignments
