@@ -22,23 +22,28 @@ def _make_source(url: str, title: str = "Test", is_academic: bool = False) -> So
 
 @pytest.fixture
 def diverse_sources() -> list[Source]:
-    """Sources from 6 different domains, including 3 academic."""
+    """Sources from 20+ different domains, including 5+ academic."""
     return [
         _make_source("https://cyberleninka.ru/article/1", "Статья 1"),
         _make_source("https://elibrary.ru/article/2", "Статья 2"),
         _make_source("https://scholar.google.com/3", "Статья 3"),
-        _make_source("https://example.com/4", "Сайт 1"),
-        _make_source("https://habr.com/5", "Хабр"),
-        _make_source("https://rbc.ru/6", "РБК"),
-        _make_source("https://tass.ru/7", "ТАСС"),
-        _make_source("https://kommersant.ru/8", "Коммерсант"),
-        _make_source("https://forbes.ru/9", "Forbes"),
-        _make_source("https://vedomosti.ru/10", "Ведомости"),
-        _make_source("https://ria.ru/11", "РИА"),
-        _make_source("https://lenta.ru/12", "Лента"),
-        _make_source("https://iz.ru/13", "Известия"),
-        _make_source("https://gazeta.ru/14", "Газета"),
-        _make_source("https://expert.ru/15", "Эксперт"),
+        _make_source("https://arxiv.org/abs/4", "Статья 4"),
+        _make_source("https://researchgate.net/pub/5", "Статья 5"),
+        _make_source("https://example.com/6", "Сайт 1"),
+        _make_source("https://habr.com/7", "Хабр"),
+        _make_source("https://rbc.ru/8", "РБК"),
+        _make_source("https://tass.ru/9", "ТАСС"),
+        _make_source("https://kommersant.ru/10", "Коммерсант"),
+        _make_source("https://forbes.ru/11", "Forbes"),
+        _make_source("https://vedomosti.ru/12", "Ведомости"),
+        _make_source("https://ria.ru/13", "РИА"),
+        _make_source("https://lenta.ru/14", "Лента"),
+        _make_source("https://iz.ru/15", "Известия"),
+        _make_source("https://gazeta.ru/16", "Газета"),
+        _make_source("https://expert.ru/17", "Эксперт"),
+        _make_source("https://consultant.ru/18", "Консультант"),
+        _make_source("https://garant.ru/19", "Гарант"),
+        _make_source("https://nauka.ru/20", "Наука"),
     ]
 
 
@@ -61,9 +66,9 @@ class TestSourceDiversityChecker:
         report = checker.analyze(diverse_sources)
 
         assert report.is_sufficient
-        assert report.total_sources >= 15
-        assert report.unique_domains >= 5
-        assert report.academic_count >= 3
+        assert report.total_sources >= 20
+        assert report.unique_domains >= 8
+        assert report.academic_count >= 5
 
     def test_insufficient_sources(
         self, mock_search: MockSearchProvider, poor_sources: list[Source]

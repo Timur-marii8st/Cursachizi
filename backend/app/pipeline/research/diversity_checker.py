@@ -69,10 +69,10 @@ class SourceDiversityChecker:
     def __init__(
         self,
         search: SearchProvider,
-        min_sources: int = 15,
-        min_unique_domains: int = 5,
-        min_academic_sources: int = 3,
-        max_wikipedia_ratio: float = 0.2,
+        min_sources: int = 20,
+        min_unique_domains: int = 8,
+        min_academic_sources: int = 5,
+        max_wikipedia_ratio: float = 0.15,
     ) -> None:
         self._search = search
         self._min_sources = min_sources
@@ -112,7 +112,7 @@ class SourceDiversityChecker:
         sources: list[Source],
         topic: str,
         report: DiversityReport,
-        max_additional_searches: int = 3,
+        max_additional_searches: int = 6,
     ) -> list[Source]:
         """Run additional searches to improve diversity if needed.
 
@@ -129,24 +129,30 @@ class SourceDiversityChecker:
                 f"{topic} site:cyberleninka.ru",
                 f"{topic} site:elibrary.ru",
                 f"{topic} научная статья",
+                f"{topic} site:scholar.google.com",
+                f"{topic} диссертация автореферат",
+                f"{topic} научный журнал",
             ]
             for query in academic_queries[:max_additional_searches]:
                 try:
-                    results = await self._search.search(query, max_results=5)
+                    results = await self._search.search(query, max_results=8)
                     additional.extend(results)
                 except Exception as e:
                     logger.warning("diversity_search_failed", query=query, error=str(e))
 
-        elif report.needs_more_sources or report.needs_more_diversity:
+        if report.needs_more_sources or report.needs_more_diversity:
             # Broader search for more diverse sources
             diverse_queries = [
                 f"{topic} исследование",
                 f"{topic} монография",
                 f"{topic} учебное пособие",
+                f"{topic} анализ проблемы",
+                f"{topic} обзор литературы",
             ]
-            for query in diverse_queries[:max_additional_searches]:
+            remaining = max_additional_searches - len(additional) // 8
+            for query in diverse_queries[:max(remaining, 3)]:
                 try:
-                    results = await self._search.search(query, max_results=5)
+                    results = await self._search.search(query, max_results=8)
                     additional.extend(results)
                 except Exception as e:
                     logger.warning("diversity_search_failed", query=query, error=str(e))
