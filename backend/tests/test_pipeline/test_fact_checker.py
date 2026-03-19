@@ -143,10 +143,11 @@ class TestFactChecker:
         mock_search.set_results([])
 
         claim = FactCheckClaim(claim_text="Unverifiable claim", source_section="Ch1")
-        result = await fact_checker.check_claim(claim)
+        result = await fact_checker.check_claim(claim, max_rounds=2)
 
         assert result.verdict == ClaimVerdict.UNCERTAIN
         assert result.confidence == 0.0
+        assert len(mock_search.queries) == 1
 
     async def test_iterative_check_reformulates_on_uncertainty(
         self,
@@ -228,7 +229,7 @@ class TestFactChecker:
 
         assert result.verdict == ClaimVerdict.UNCERTAIN
         assert result.confidence == 0.0
-        assert len(mock_search.queries) == 2
+        assert len(mock_search.queries) == 1
 
 
 class TestVerifierStage:

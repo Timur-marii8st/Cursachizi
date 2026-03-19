@@ -25,6 +25,18 @@ from shared.schemas.pipeline import PipelineConfig
 logger = structlog.get_logger()
 
 
+def _format_worker_error(exc: Exception, *, timeout_seconds: int | None = None) -> str:
+    """Convert exceptions into a stable, user-facing error message."""
+    message = str(exc).strip()
+    if message:
+        return message
+    if isinstance(exc, TimeoutError):
+        if timeout_seconds is not None:
+            return f"Pipeline timed out after {timeout_seconds} seconds"
+        return "Pipeline timed out"
+    return exc.__class__.__name__
+
+
 class JobProgressCallback(StageCallback):
     """Updates job progress in the database as pipeline stages execute."""
 
@@ -68,6 +80,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
     This is the entry point called by arq when a job is dequeued.
     """
     settings = get_settings()
+    timeout_seconds = settings.pipeline_timeout_seconds
     logger.info("pipeline_worker_start", job_id=job_id)
 
     async with AsyncSessionLocal() as session:
@@ -147,7 +160,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
         try:
             # ARCH-001: enforce pipeline timeout to prevent indefinite worker blocking
-            timeout = config.timeout_seconds or settings.pipeline_timeout_seconds
+            timeout_seconds = config.timeout_seconds or settings.pipeline_timeout_seconds
             result = await asyncio.wait_for(
                 orchestrator.run(
                     topic=topic,
@@ -160,7 +173,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
                     callback=callback,
                     reference_docx_bytes=reference_docx_bytes,
                 ),
-                timeout=timeout,
+                timeout=timeout_seconds,
             )
 
             async with AsyncSessionLocal() as session:
@@ -228,18 +241,51 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             if translator is not None and hasattr(translator, "aclose"):
                 await translator.aclose()
 
+    except TimeoutError:
+        logger.error(
+            "pipeline_worker_timed_out",
+            job_id=job_id,
+            timeout_seconds=timeout_seconds,
+            exc_info=True,
+        )
+
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            stage = job.stage if job else ""
+            stage_message = job.stage_message if job else ""
+
+            error_message = f"Pipeline timed out after {timeout_seconds} seconds"
+            if stage:
+                error_message += f" during stage '{stage}'"
+            if stage_message:
+                error_message += f" ({stage_message})"
+
+            if job:
+                job.status = JobStatus.FAILED
+                job.error_message = error_message[:2000]
+                job.updated_at = datetime.now(UTC)
+                await session.commit()
+
+        return f"Job {job_id} failed: {error_message}"
+
     except Exception as e:
-        logger.error("pipeline_worker_failed", job_id=job_id, error=str(e))
+        error_message = _format_worker_error(e, timeout_seconds=timeout_seconds)
+        logger.error(
+            "pipeline_worker_failed",
+            job_id=job_id,
+            error=error_message,
+            error_type=e.__class__.__name__,
+        )
 
         async with AsyncSessionLocal() as session:
             job = await session.get(Job, job_id)
             if job:
                 job.status = JobStatus.FAILED
-                job.error_message = str(e)[:2000]
+                job.error_message = error_message[:2000]
                 job.updated_at = datetime.now(UTC)
                 await session.commit()
 
-        return f"Job {job_id} failed: {e}"
+        return f"Job {job_id} failed: {error_message}"
 
 
 class WorkerSettings:

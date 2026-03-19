@@ -586,6 +586,70 @@ class TestFullPipelineFlow:
         assert "Some reference" in full_text
 
 
+class TestRegistryPreservation:
+    """Regression tests for bibliography registry preservation in DOCX output."""
+
+    def test_registry_with_many_sources_survives_docx_generation(
+        self,
+        generator: DocxGenerator,
+    ) -> None:
+        sources = [
+            Source(url=f"https://example.com/{i}", title=f"Source {i}")
+            for i in range(1, 13)
+        ]
+        registry = BibliographyRegistry.from_sources(sources)
+
+        outline = Outline(
+            title="Registry preservation",
+            chapters=[
+                OutlineChapter(
+                    number=1,
+                    title="Chapter 1",
+                    subsections=["1.1 Section"],
+                    description="",
+                ),
+            ],
+        )
+        sections = [
+            SectionContent(
+                chapter_number=0,
+                section_title="Введение",
+                content="Intro text [1].\n\n[1] Fake bibliography entry.",
+                word_count=4,
+            ),
+            SectionContent(
+                chapter_number=1,
+                section_title="1.1 Section",
+                content="Body text [2].",
+                word_count=3,
+            ),
+            SectionContent(
+                chapter_number=99,
+                section_title="Заключение",
+                content="Conclusion text [3].",
+                word_count=3,
+            ),
+        ]
+
+        doc_bytes = generator.generate(
+            outline=outline,
+            sections=sections,
+            sources=sources,
+            bibliography=registry,
+        )
+
+        doc = Document(io.BytesIO(doc_bytes))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        bib_start = full_text.find("СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ")
+        assert bib_start >= 0
+        bib_text = full_text[bib_start:]
+
+        for source in sources:
+            assert source.title in bib_text
+
+        assert "Fake bibliography entry" not in bib_text
+
+
 class TestEmptyBibliography:
     """Tests for empty bibliography edge case — should skip bibliography section."""
 

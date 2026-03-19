@@ -53,6 +53,27 @@ class TrackingCallback(StageCallback):
 
 
 class TestPipelineOrchestrator:
+    async def test_large_coursework_requires_minimum_source_pool(
+        self,
+        mock_llm: MockLLMProvider,
+        search_with_results: MockSearchProvider,
+    ) -> None:
+        """30-page coursework should fail fast when research yields too few sources."""
+        mock_llm.set_response(json.dumps({"queries": ["query1"]}))
+
+        orchestrator = PipelineOrchestrator(
+            llm=mock_llm,
+            search=search_with_results,
+        )
+
+        with pytest.raises(RuntimeError, match="Insufficient research sources"):
+            await orchestrator.run(
+                topic="Large coursework topic",
+                discipline="Test",
+                page_count=30,
+                config=PipelineConfig(enable_fact_check=False),
+            )
+
     async def test_full_pipeline_execution(
         self,
         mock_llm: MockLLMProvider,
@@ -195,6 +216,7 @@ class TestPipelineOrchestrator:
 
         result = await orchestrator.run(
             topic="Test",
+            page_count=20,
             config=config,
         )
 
@@ -330,6 +352,7 @@ class TestPipelineOrchestrator:
         result = await orchestrator.run(
             topic="Тестовая курсовая",
             work_type=WorkType.COURSEWORK,
+            page_count=20,
             config=config,
         )
 

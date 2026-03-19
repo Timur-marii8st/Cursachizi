@@ -85,8 +85,8 @@ class TestJobStage:
 class TestPipelineConfig:
     def test_defaults(self) -> None:
         config = PipelineConfig()
-        assert config.max_search_results == 20
-        assert config.max_sources == 15
+        assert config.max_search_results == 60
+        assert config.max_sources == 30
         assert config.enable_fact_check is True
         assert config.timeout_seconds == 900
 

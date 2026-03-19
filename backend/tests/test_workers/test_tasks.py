@@ -22,6 +22,12 @@ def _make_mock_job(**overrides) -> MagicMock:
     return job
 
 
+def _mock_client() -> MagicMock:
+    client = MagicMock()
+    client.aclose = AsyncMock()
+    return client
+
+
 class TestRunPipelineCancellationCheck:
     """BUG-002: worker must not overwrite CANCELLED status with COMPLETED."""
 
@@ -72,8 +78,8 @@ class TestRunPipelineCancellationCheck:
         with (
             patch("backend.app.workers.tasks.AsyncSessionLocal", side_effect=_session_factory),
             patch("backend.app.workers.tasks.get_settings") as mock_settings,
-            patch("backend.app.workers.tasks.get_llm_provider"),
-            patch("backend.app.workers.tasks.get_search_provider"),
+            patch("backend.app.workers.tasks.get_llm_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_search_provider", return_value=_mock_client()),
             patch("backend.app.workers.tasks.get_vision_llm_provider", return_value=None),
             patch("backend.app.workers.tasks.PipelineOrchestrator") as mock_orch_cls,
         ):
@@ -147,8 +153,8 @@ class TestRunPipelineCancellationCheck:
         with (
             patch("backend.app.workers.tasks.AsyncSessionLocal", side_effect=_session_factory),
             patch("backend.app.workers.tasks.get_settings") as mock_settings,
-            patch("backend.app.workers.tasks.get_llm_provider"),
-            patch("backend.app.workers.tasks.get_search_provider"),
+            patch("backend.app.workers.tasks.get_llm_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_search_provider", return_value=_mock_client()),
             patch("backend.app.workers.tasks.get_vision_llm_provider", return_value=None),
             patch("backend.app.workers.tasks.PipelineOrchestrator") as mock_orch_cls,
         ):
@@ -174,3 +180,219 @@ class TestRunPipelineCancellationCheck:
         assert "completed" in result.lower()
         assert still_running_job.status == JobStatus.COMPLETED
         completion_session.commit.assert_called_once()
+
+    async def test_timeout_sets_informative_error_message(self) -> None:
+        """Timeouts must persist a descriptive error instead of an empty string."""
+        job_id = str(uuid4())
+
+        startup_job = _make_mock_job(id=job_id, status=JobStatus.RUNNING)
+        failed_job = _make_mock_job(id=job_id, status=JobStatus.RUNNING)
+        failed_job.stage = "fact_checking"
+        failed_job.stage_message = "Проверено 14/25 утверждений"
+
+        startup_session = AsyncMock()
+        startup_session.get = AsyncMock(return_value=startup_job)
+        startup_session.commit = AsyncMock()
+
+        failure_session = AsyncMock()
+        failure_session.get = AsyncMock(return_value=failed_job)
+        failure_session.commit = AsyncMock()
+
+        class _SessionContext:
+            def __init__(self, session):
+                self._session = session
+
+            async def __aenter__(self):
+                return self._session
+
+            async def __aexit__(self, *args):
+                pass
+
+        sessions = [startup_session, failure_session]
+        call_count = 0
+
+        def _session_factory():
+            nonlocal call_count
+            session = sessions[min(call_count, len(sessions) - 1)]
+            call_count += 1
+            return _SessionContext(session)
+
+        async def _raise_timeout(awaitable, timeout):
+            awaitable.close()
+            raise TimeoutError()
+
+        with (
+            patch("backend.app.workers.tasks.AsyncSessionLocal", side_effect=_session_factory),
+            patch("backend.app.workers.tasks.get_settings") as mock_settings,
+            patch("backend.app.workers.tasks.get_llm_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_search_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_vision_llm_provider", return_value=None),
+            patch("backend.app.workers.tasks.PipelineOrchestrator") as mock_orch_cls,
+            patch(
+                "backend.app.workers.tasks.asyncio.wait_for",
+                new=AsyncMock(side_effect=_raise_timeout),
+            ),
+        ):
+            settings = MagicMock()
+            settings.google_translate_api_key = ""
+            settings.deepl_api_key = ""
+            settings.visual_match_enabled = False
+            settings.max_search_results = 5
+            settings.max_sources_per_topic = 10
+            settings.max_tokens_per_section = 2000
+            settings.default_writer_model = "gemini"
+            settings.default_light_model = "gemini"
+            settings.pipeline_timeout_seconds = 120
+            mock_settings.return_value = settings
+
+            mock_orch = AsyncMock()
+            mock_orch.run = AsyncMock()
+            mock_orch_cls.return_value = mock_orch
+
+            from backend.app.workers.tasks import run_pipeline
+            result = await run_pipeline({}, job_id)
+
+        assert "timed out after 120 seconds" in result
+        assert "fact_checking" in result
+        assert "14/25" in result
+        assert failed_job.status == JobStatus.FAILED
+        assert failed_job.error_message == (
+            "Pipeline timed out after 120 seconds during stage 'fact_checking' "
+            "(Проверено 14/25 утверждений)"
+        )
+        failure_session.commit.assert_called_once()
+
+
+class TestRunPipelineErrorFormatting:
+    """Worker must persist meaningful errors for empty exceptions and timeouts."""
+
+    async def test_timeout_error_gets_meaningful_message(self) -> None:
+        job_id = str(uuid4())
+
+        running_job = _make_mock_job(id=job_id, status=JobStatus.RUNNING)
+        failed_job = _make_mock_job(id=job_id, status=JobStatus.RUNNING)
+
+        startup_session = AsyncMock()
+        startup_session.get = AsyncMock(return_value=running_job)
+        startup_session.commit = AsyncMock()
+
+        failure_session = AsyncMock()
+        failure_session.get = AsyncMock(return_value=failed_job)
+        failure_session.commit = AsyncMock()
+
+        class _SessionContext:
+            def __init__(self, session):
+                self._session = session
+
+            async def __aenter__(self):
+                return self._session
+
+            async def __aexit__(self, *args):
+                pass
+
+        sessions = [startup_session, failure_session]
+        call_count = 0
+
+        def _session_factory():
+            nonlocal call_count
+            session = sessions[min(call_count, len(sessions) - 1)]
+            call_count += 1
+            return _SessionContext(session)
+
+        with (
+            patch("backend.app.workers.tasks.AsyncSessionLocal", side_effect=_session_factory),
+            patch("backend.app.workers.tasks.get_settings") as mock_settings,
+            patch("backend.app.workers.tasks.get_llm_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_search_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_vision_llm_provider", return_value=None),
+            patch("backend.app.workers.tasks.PipelineOrchestrator") as mock_orch_cls,
+        ):
+            settings = MagicMock()
+            settings.google_translate_api_key = ""
+            settings.deepl_api_key = ""
+            settings.visual_match_enabled = False
+            settings.max_search_results = 5
+            settings.max_sources_per_topic = 10
+            settings.max_tokens_per_section = 2000
+            settings.default_writer_model = "gemini"
+            settings.default_light_model = "gemini"
+            settings.pipeline_timeout_seconds = 120
+            mock_settings.return_value = settings
+
+            mock_orch = AsyncMock()
+            mock_orch.run = AsyncMock(side_effect=TimeoutError())
+            mock_orch_cls.return_value = mock_orch
+
+            from backend.app.workers.tasks import run_pipeline
+            result = await run_pipeline({}, job_id)
+
+        assert "timed out" in result.lower()
+        assert "timed out" in failed_job.error_message.lower()
+        assert failed_job.error_message
+        assert failed_job.status == JobStatus.FAILED
+        failure_session.commit.assert_called_once()
+
+    async def test_empty_exception_uses_class_name(self) -> None:
+        job_id = str(uuid4())
+
+        running_job = _make_mock_job(id=job_id, status=JobStatus.RUNNING)
+        failed_job = _make_mock_job(id=job_id, status=JobStatus.RUNNING)
+
+        startup_session = AsyncMock()
+        startup_session.get = AsyncMock(return_value=running_job)
+        startup_session.commit = AsyncMock()
+
+        failure_session = AsyncMock()
+        failure_session.get = AsyncMock(return_value=failed_job)
+        failure_session.commit = AsyncMock()
+
+        class _SessionContext:
+            def __init__(self, session):
+                self._session = session
+
+            async def __aenter__(self):
+                return self._session
+
+            async def __aexit__(self, *args):
+                pass
+
+        sessions = [startup_session, failure_session]
+        call_count = 0
+
+        def _session_factory():
+            nonlocal call_count
+            session = sessions[min(call_count, len(sessions) - 1)]
+            call_count += 1
+            return _SessionContext(session)
+
+        with (
+            patch("backend.app.workers.tasks.AsyncSessionLocal", side_effect=_session_factory),
+            patch("backend.app.workers.tasks.get_settings") as mock_settings,
+            patch("backend.app.workers.tasks.get_llm_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_search_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_vision_llm_provider", return_value=None),
+            patch("backend.app.workers.tasks.PipelineOrchestrator") as mock_orch_cls,
+        ):
+            settings = MagicMock()
+            settings.google_translate_api_key = ""
+            settings.deepl_api_key = ""
+            settings.visual_match_enabled = False
+            settings.max_search_results = 5
+            settings.max_sources_per_topic = 10
+            settings.max_tokens_per_section = 2000
+            settings.default_writer_model = "gemini"
+            settings.default_light_model = "gemini"
+            settings.pipeline_timeout_seconds = 120
+            mock_settings.return_value = settings
+
+            mock_orch = AsyncMock()
+            mock_orch.run = AsyncMock(side_effect=Exception())
+            mock_orch_cls.return_value = mock_orch
+
+            from backend.app.workers.tasks import run_pipeline
+            result = await run_pipeline({}, job_id)
+
+        assert "exception" in result.lower()
+        assert failed_job.error_message == "Exception"
+        assert failed_job.status == JobStatus.FAILED
+        failure_session.commit.assert_called_once()

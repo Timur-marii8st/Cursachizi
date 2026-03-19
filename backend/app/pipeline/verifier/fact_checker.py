@@ -74,11 +74,11 @@ class FactChecker:
                 claim.verdict = ClaimVerdict.UNCERTAIN
                 claim.confidence = 0.0
                 claim.evidence = "Не удалось найти источники для проверки."
-                if round_num < max_rounds:
-                    query = await self._reformulate_query(
-                        claim.claim_text, query, "uncertain", 0.0, model
-                    )
-                    continue
+                logger.warning(
+                    "claim_check_no_search_results",
+                    claim=claim.claim_text[:60],
+                    round=round_num,
+                )
                 return claim
 
             results_text = "\n\n".join(

@@ -11,6 +11,8 @@ from backend.app.llm.factory import create_llm_provider
 from backend.app.llm.provider import LLMProvider
 from backend.app.pipeline.research.searcher import (
     DuckDuckGoSearchProvider,
+    FallbackSearchProvider,
+    SerperSearchProvider,
     SearchProvider,
 )
 
@@ -185,10 +187,15 @@ def get_vision_llm_provider(settings: Settings | None = None):
 def get_search_provider(settings: Settings | None = None) -> SearchProvider:
     """Get the configured search provider.
 
-    DuckDuckGo is the default (free, no API key needed).
-    Serper is available as an alternative if explicitly configured.
+    Prefer Serper when available because it is more reliable and materially
+    faster than scraping DuckDuckGo HTML. Keep DuckDuckGo as a no-key fallback.
     """
     settings = settings or get_settings()
 
-    # DuckDuckGo is always the primary provider — free and keyless
+    if settings.serper_api_key.strip():
+        return FallbackSearchProvider(
+            primary=SerperSearchProvider(api_key=settings.serper_api_key),
+            fallback=DuckDuckGoSearchProvider(),
+            min_results=3,
+        )
     return DuckDuckGoSearchProvider()

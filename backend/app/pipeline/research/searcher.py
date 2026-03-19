@@ -27,6 +27,84 @@ class SearchProvider(ABC):
         """Close any underlying resources. No-op by default."""
 
 
+class FallbackSearchProvider(SearchProvider):
+    """Search provider that falls back to a secondary backend when needed."""
+
+    def __init__(
+        self,
+        primary: SearchProvider,
+        fallback: SearchProvider,
+        *,
+        min_results: int = 1,
+    ) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._min_results = min_results
+
+    async def search(self, query: str, max_results: int = 10) -> list[Source]:
+        try:
+            primary_results = await self._primary.search(
+                query=query,
+                max_results=max_results,
+            )
+        except Exception as exc:
+            logger.warning(
+                "search_primary_failed",
+                query=query[:80],
+                provider=type(self._primary).__name__,
+                error=str(exc) or type(exc).__name__,
+            )
+            primary_results = []
+
+        if len(primary_results) >= self._min_results:
+            return primary_results[:max_results]
+
+        try:
+            fallback_results = await self._fallback.search(
+                query=query,
+                max_results=max_results,
+            )
+        except Exception as exc:
+            logger.warning(
+                "search_fallback_failed",
+                query=query[:80],
+                provider=type(self._fallback).__name__,
+                error=str(exc) or type(exc).__name__,
+            )
+            fallback_results = []
+        combined = self._merge_results(primary_results, fallback_results)
+        logger.info(
+            "search_fallback_used",
+            query=query[:80],
+            primary_results=len(primary_results),
+            fallback_results=len(fallback_results),
+            total_results=len(combined),
+        )
+        return combined[:max_results]
+
+    async def aclose(self) -> None:
+        await self._primary.aclose()
+        await self._fallback.aclose()
+
+    @staticmethod
+    def _merge_results(primary: list[Source], fallback: list[Source]) -> list[Source]:
+        seen: set[str] = set()
+        merged: list[Source] = []
+        for source in [*primary, *fallback]:
+            key = FallbackSearchProvider._source_key(source)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(source)
+        return merged
+
+    @staticmethod
+    def _source_key(source: Source) -> str:
+        if source.url.strip():
+            return source.url.strip().lower().rstrip("/")
+        return source.title.strip().lower()
+
+
 class DuckDuckGoSearchProvider(SearchProvider):
     """DuckDuckGo HTML search provider.
 
@@ -42,15 +120,19 @@ class DuckDuckGoSearchProvider(SearchProvider):
         "Chrome/124.0.0.0 Safari/537.36"
     )
     MIN_REQUEST_INTERVAL = 1.0  # seconds between requests
+    FAILURE_THRESHOLD = 3
+    FAILURE_COOLDOWN_SECONDS = 60.0
 
-    def __init__(self) -> None:
+    def __init__(self, timeout: float = 30.0) -> None:
         self._client = httpx.AsyncClient(
-            timeout=30.0,
+            timeout=timeout,
             limits=httpx.Limits(max_connections=5, max_keepalive_connections=3),
             headers={"User-Agent": self.USER_AGENT},
             follow_redirects=True,
         )
         self._last_call_time: float = 0.0
+        self._consecutive_failures = 0
+        self._cooldown_until: float = 0.0
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -85,6 +167,15 @@ class DuckDuckGoSearchProvider(SearchProvider):
 
     async def search(self, query: str, max_results: int = 10) -> list[Source]:
         try:
+            now = time.monotonic()
+            if now < self._cooldown_until:
+                logger.warning(
+                    "ddg_circuit_open",
+                    query=query[:80],
+                    retry_after_seconds=round(self._cooldown_until - now, 2),
+                )
+                return []
+
             await self._rate_limit()
 
             response = await self._client.get(
@@ -124,9 +215,14 @@ class DuckDuckGoSearchProvider(SearchProvider):
             logger.info(
                 "ddg_search_complete", query=query[:80], results=len(sources)
             )
+            self._consecutive_failures = 0
+            self._cooldown_until = 0.0
             return sources
 
         except Exception as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self.FAILURE_THRESHOLD:
+                self._cooldown_until = time.monotonic() + self.FAILURE_COOLDOWN_SECONDS
             logger.error("ddg_search_failed", query=query[:80], error=str(e))
             return []
 

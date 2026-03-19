@@ -12,6 +12,7 @@ from backend.app.pipeline.formatter.document_renderer import DocumentRenderer
 from backend.app.pipeline.formatter.stage import FormatterStage
 from backend.app.pipeline.formatter.visual_matcher import VisualTemplateMatcher
 from backend.app.pipeline.research.diversity_checker import SourceDiversityChecker
+from backend.app.pipeline.research.ranker import SourceRanker
 from backend.app.pipeline.research.searcher import SearchProvider
 from backend.app.pipeline.research.stage import ResearchStage
 from backend.app.pipeline.verifier.correction_applier import CorrectionApplier
@@ -34,6 +35,7 @@ from shared.schemas.pipeline import (
     PipelineConfig,
     ResearchResult,
     SectionContent,
+    Source,
     VisualMatchResult,
 )
 from shared.schemas.template import GostTemplate
@@ -99,6 +101,7 @@ class PipelineOrchestrator:
         self._search = search
         self._research_stage = ResearchStage(llm, search)
         self._diversity_checker = SourceDiversityChecker(search=search)
+        self._source_ranker = SourceRanker()
         self._writer_stage = WriterStage(llm)
         self._article_writer_stage = ArticleWriterStage(llm)
         self._section_evaluator = SectionEvaluator(llm)
@@ -161,11 +164,43 @@ class PipelineOrchestrator:
             # Stage 1b: Source diversity check
             diversity_report = self._diversity_checker.analyze(result.research.sources)
             if not diversity_report.is_sufficient:
-                result.research.sources = await self._diversity_checker.improve(
+                result.research.sources = await self._improve_source_pool(
                     sources=result.research.sources,
                     topic=topic,
                     report=diversity_report,
+                    max_sources=config.max_sources,
                 )
+                diversity_report = self._diversity_checker.analyze(result.research.sources)
+
+            min_required_sources = self._minimum_required_sources(
+                work_type_enum=work_type_enum,
+                page_count=page_count,
+                max_sources=config.max_sources,
+            )
+            if (
+                min_required_sources > 0
+                and len(result.research.sources) < min_required_sources
+            ):
+                retry_report = self._diversity_checker.analyze(result.research.sources)
+                if not retry_report.is_sufficient:
+                    result.research.sources = await self._improve_source_pool(
+                        sources=result.research.sources,
+                        topic=topic,
+                        report=retry_report,
+                        max_sources=config.max_sources,
+                        max_additional_searches=10,
+                    )
+                    diversity_report = self._diversity_checker.analyze(
+                        result.research.sources
+                    )
+
+                if len(result.research.sources) < min_required_sources:
+                    raise RuntimeError(
+                        "Insufficient research sources found "
+                        f"({len(result.research.sources)} < {min_required_sources}) "
+                        f"for a {page_count}-page {work_type_enum.value}. "
+                        "Search providers could not gather enough distinct sources."
+                    )
 
             # Build unified bibliography registry from real research sources
             result.bibliography = BibliographyRegistry.from_sources(
@@ -489,6 +524,37 @@ class PipelineOrchestrator:
             raise
 
         return result
+
+    async def _improve_source_pool(
+        self,
+        *,
+        sources: list[Source],
+        topic: str,
+        report,
+        max_sources: int,
+        max_additional_searches: int = 6,
+    ) -> list[Source]:
+        improved_sources = await self._diversity_checker.improve(
+            sources=sources,
+            topic=topic,
+            report=report,
+            max_additional_searches=max_additional_searches,
+        )
+        return self._source_ranker.rank_and_filter(
+            improved_sources,
+            max_sources=max_sources,
+        )
+
+    def _minimum_required_sources(
+        self,
+        *,
+        work_type_enum: WorkType,
+        page_count: int,
+        max_sources: int,
+    ) -> int:
+        if work_type_enum != WorkType.COURSEWORK or page_count < 25:
+            return 0
+        return min(self._template.min_bibliography_entries, max_sources)
 
     async def _evaluate_and_rewrite_sections(
         self,
