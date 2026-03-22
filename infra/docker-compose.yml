@@ -85,7 +85,7 @@ services:
 
   # ── sing-box VPN proxy (bypasses Telegram blocks in RU) ─
   singbox:
-    image: ghcr.io/sagernet/sing-box:v1.10.7
+    image: ghcr.io/sagernet/sing-box:latest
     command: run -c /etc/sing-box/config.json
     volumes:
       - ./singbox/config.json:/etc/sing-box/config.json:ro
