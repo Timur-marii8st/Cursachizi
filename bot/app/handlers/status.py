@@ -1,11 +1,14 @@
 """Job status checking handlers."""
 
+import structlog
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, Message
 
 from bot.app.services.api_client import CourseForgeAPIClient
 from shared.schemas.job import JobStage, JobStatus, WorkType
+
+logger = structlog.get_logger()
 
 router = Router()
 
@@ -84,4 +87,5 @@ async def cmd_status(
                 )
 
     except Exception:
+        logger.exception("status_command_failed", telegram_id=message.from_user.id)
         await message.answer("Не удалось получить статус. Попробуйте позже.")
