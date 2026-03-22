@@ -121,6 +121,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
         page_count = job.page_count
         additional_instructions = job.additional_instructions
         reference_s3_key = job.reference_s3_key
+        job_pipeline_config = job.pipeline_config if isinstance(job.pipeline_config, dict) else {}
 
     # ARCH-001: enforce pipeline timeout to prevent indefinite worker blocking
     timeout_seconds = settings.pipeline_timeout_seconds
@@ -143,9 +144,12 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             logger.error("reference_download_failed", key=reference_s3_key, error=str(e))
 
     # Build pipeline config once — it is stateless and attempt-independent.
+    # Read user-selected source count from job, fallback to global setting
+    user_max_sources = job_pipeline_config.get("max_sources", settings.max_sources_per_topic)
+
     config = PipelineConfig(
-        max_search_results=settings.max_search_results,
-        max_sources=settings.max_sources_per_topic,
+        max_search_results=max(settings.max_search_results, user_max_sources * 2),
+        max_sources=user_max_sources,
         max_tokens_per_section=settings.max_tokens_per_section,
         writer_model=settings.default_writer_model,
         light_model=settings.default_light_model,

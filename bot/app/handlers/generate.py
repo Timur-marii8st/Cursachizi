@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, Message
 from bot.app.keyboards.inline import (
     get_confirm_keyboard,
     get_page_count_keyboard,
+    get_source_count_keyboard,
     get_work_type_keyboard,
 )
 from bot.app.services.api_client import CourseForgeAPIClient
@@ -30,6 +31,7 @@ class GenerateForm(StatesGroup):
     waiting_discipline = State()
     waiting_university = State()
     waiting_page_count = State()
+    waiting_source_count = State()
     waiting_instructions = State()
     waiting_confirmation = State()
 
@@ -125,12 +127,38 @@ async def process_page_count(callback: CallbackQuery, state: FSMContext) -> None
         await callback.answer("Неверное количество страниц. Попробуйте снова.")
         return
     await state.update_data(page_count=page_count)
-    await state.set_state(GenerateForm.waiting_instructions)
     await callback.message.edit_text(f"Количество страниц: {page_count}")
+
+    data = await state.get_data()
+    work_type = WorkType(data.get("work_type", WorkType.COURSEWORK.value))
+
+    await state.set_state(GenerateForm.waiting_source_count)
     await callback.message.answer(
-        "Есть дополнительные требования? (или отправьте «-» чтобы пропустить)\n\n"
+        "Выберите количество источников для библиографии:",
+        reply_markup=get_source_count_keyboard(work_type),
+    )
+
+
+@router.callback_query(GenerateForm.waiting_source_count, F.data.startswith("sources:"))
+async def process_source_count(callback: CallbackQuery, state: FSMContext) -> None:
+    """Receive source count selection."""
+    parts = callback.data.split(":", 1)
+    try:
+        source_count = int(parts[1]) if len(parts) > 1 else 0
+        if source_count < 5 or source_count > 80:
+            raise ValueError
+    except (ValueError, IndexError):
+        await callback.answer("Неверный выбор. Попробуйте снова.")
+        return
+
+    await state.update_data(source_count=source_count)
+    await callback.message.edit_text(f"Источников: {source_count}")
+    await state.set_state(GenerateForm.waiting_instructions)
+    await callback.message.answer(
+        "Есть дополнительные требования к работе?\n\n"
         "Например: «Обязательно рассмотреть зарубежный опыт», "
-        "«Включить анализ статистики за последние 5 лет»"
+        "«Включить анализ статистики за последние 5 лет»\n\n"
+        "Отправьте «-» чтобы пропустить."
     )
 
 
@@ -153,6 +181,7 @@ async def process_instructions(message: Message, state: FSMContext) -> None:
         f"📚 Дисциплина: {data.get('discipline') or 'не указана'}\n"
         f"🏫 Университет: {data.get('university') or 'не указан'}\n"
         f"📄 Страниц: {data['page_count']}\n"
+        f"📖 Источников: {data.get('source_count', 20)}\n"
         f"💬 Доп. требования: {data.get('additional_instructions') or 'нет'}"
     )
 
@@ -184,6 +213,7 @@ async def process_confirm(
             discipline=data.get("discipline", ""),
             university=data.get("university", ""),
             page_count=data["page_count"],
+            source_count=data.get("source_count", 20),
             additional_instructions=data.get("additional_instructions", ""),
             telegram_id=callback.from_user.id,
         )

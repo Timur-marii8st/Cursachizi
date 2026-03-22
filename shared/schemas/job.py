@@ -53,6 +53,12 @@ class JobCreate(BaseModel):
         le=80,
         description="Target page count (5-15 for articles, 15-80 for coursework)",
     )
+    source_count: int = Field(
+        default=20,
+        ge=5,
+        le=80,
+        description="Target number of research sources",
+    )
     language: str = Field(default="ru", description="Output language (ru or en)")
     template_id: str | None = Field(
         default=None,

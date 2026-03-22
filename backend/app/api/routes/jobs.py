@@ -137,6 +137,10 @@ async def create_job(
     )
     db.add(job)
     await db.flush()
+
+    # Store user-selected source count in pipeline_config for the worker
+    job.pipeline_config = {"max_sources": job_in.source_count}
+
     await db.refresh(job)
 
     # Commit before enqueuing to avoid race condition: arq worker must see the
