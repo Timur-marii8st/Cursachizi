@@ -87,6 +87,8 @@ services:
   singbox:
     image: ghcr.io/sagernet/sing-box:latest
     command: run -c /etc/sing-box/config.json
+    environment:
+      ENABLE_DEPRECATED_LEGACY_DNS_SERVERS: "true"
     volumes:
       - ./singbox/config.json:/etc/sing-box/config.json:ro
     healthcheck:
