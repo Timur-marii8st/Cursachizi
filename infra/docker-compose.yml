@@ -85,10 +85,8 @@ services:
 
   # ── sing-box VPN proxy (bypasses Telegram blocks in RU) ─
   singbox:
-    image: ghcr.io/sagernet/sing-box:latest
+    image: ghcr.io/sagernet/sing-box:v1.10.7
     command: run -c /etc/sing-box/config.json
-    environment:
-      ENABLE_DEPRECATED_LEGACY_DNS_SERVERS: "true"
     volumes:
       - ./singbox/config.json:/etc/sing-box/config.json:ro
     healthcheck:
