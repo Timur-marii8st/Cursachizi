@@ -53,11 +53,13 @@ class CourseForgeAPIClient:
         response.raise_for_status()
         return JobResponse(**response.json())
 
-    async def list_jobs(self, limit: int = 20, offset: int = 0) -> list[JobResponse]:
+    async def list_jobs(
+        self, telegram_id: int, limit: int = 20, offset: int = 0
+    ) -> list[JobResponse]:
         """List jobs from the backend API."""
         response = await self._client.get(
             "/api/jobs",
-            params={"limit": limit, "offset": offset},
+            params={"telegram_id": telegram_id, "limit": limit, "offset": offset},
         )
         response.raise_for_status()
         return [JobResponse(**item) for item in response.json()]

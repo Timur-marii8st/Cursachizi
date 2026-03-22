@@ -169,7 +169,7 @@ class TestCourseForgeAPIClient:
             )
         )
 
-        jobs = await api_client.list_jobs(limit=1)
+        jobs = await api_client.list_jobs(telegram_id=12345, limit=1)
         assert len(jobs) == 1
         assert jobs[0].id == "abc123"
         assert jobs[0].status == JobStatus.COMPLETED

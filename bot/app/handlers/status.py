@@ -35,7 +35,8 @@ async def cmd_status(
 ) -> None:
     """Check status of the most recent job."""
     try:
-        jobs = await api_client.list_jobs(limit=1, offset=0)
+        telegram_id = message.from_user.id
+        jobs = await api_client.list_jobs(telegram_id=telegram_id, limit=1, offset=0)
         if not jobs:
             await message.answer("No jobs found yet. Start one with /generate")
             return
