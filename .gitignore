@@ -45,6 +45,9 @@ out/
 # Docker
 docker-compose.override.yml
 
+# VPN proxy config (contains subscription credentials)
+infra/singbox/config.json
+
 # Generated documents
 !backend/tests/fixtures/*.docx
 !templates/*.docx

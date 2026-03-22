@@ -4,6 +4,7 @@ import asyncio
 
 import structlog
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 
@@ -24,7 +25,12 @@ def create_bot() -> tuple[Bot, Dispatcher]:
     if not settings.telegram_bot_token:
         raise ValueError("TELEGRAM_BOT_TOKEN is not set")
 
-    bot = Bot(token=settings.telegram_bot_token)
+    session = None
+    if settings.telegram_api_proxy:
+        session = AiohttpSession(proxy=settings.telegram_api_proxy)
+        logger.info("bot_proxy_configured", proxy=settings.telegram_api_proxy.split("@")[-1])
+
+    bot = Bot(token=settings.telegram_bot_token, session=session)
 
     try:
         storage = RedisStorage.from_url(settings.redis_url)

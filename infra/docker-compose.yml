@@ -83,6 +83,18 @@ services:
       redis:
         condition: service_healthy
 
+  # ── sing-box VPN proxy (bypasses Telegram blocks in RU) ─
+  singbox:
+    image: ghcr.io/sagernet/sing-box:latest
+    volumes:
+      - ./singbox/config.json:/etc/sing-box/config.json:ro
+    healthcheck:
+      test: ["CMD", "sing-box", "check", "-c", "/etc/sing-box/config.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
   # ── Telegram Bot ────────────────────────────────────────
   bot:
     build:
@@ -93,11 +105,13 @@ services:
     environment:
       API_BASE_URL: http://nginx
       REDIS_URL: redis://redis:6379/0
+      TELEGRAM_API_PROXY: http://singbox:1080
     dns:
       - 8.8.8.8
       - 1.1.1.1
     depends_on:
       - nginx
+      - singbox
 
 volumes:
   postgres_data:
