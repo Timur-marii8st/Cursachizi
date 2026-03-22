@@ -66,9 +66,9 @@ class ResearchStage:
         # Step 2: Search across all queries in parallel.
         # Semaphore caps concurrent requests to respect provider rate limits.
         # Guarantee at least 5 results per query regardless of total budget.
-        _SEARCH_CONCURRENCY = 3
+        search_concurrency = 3
         per_query = max(config.max_search_results // len(queries), 5)
-        search_semaphore = asyncio.Semaphore(_SEARCH_CONCURRENCY)
+        search_semaphore = asyncio.Semaphore(search_concurrency)
 
         async def search_one(query: str) -> list:
             async with search_semaphore:

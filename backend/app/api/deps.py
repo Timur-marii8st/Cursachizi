@@ -13,8 +13,8 @@ from backend.app.llm.provider import LLMProvider
 from backend.app.pipeline.research.searcher import (
     DuckDuckGoSearchProvider,
     FallbackSearchProvider,
-    SerperSearchProvider,
     SearchProvider,
+    SerperSearchProvider,
 )
 
 # Atomic increment + conditional expire using Lua.
@@ -185,7 +185,7 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
         )
 
 
-_vision_llm_provider: "OpenRouterProvider | None" = None
+_vision_llm_provider = None  # OpenRouterProvider | None — lazy import below
 
 
 def get_vision_llm_provider(settings: Settings | None = None):

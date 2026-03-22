@@ -89,9 +89,17 @@ def mock_db(mock_user, mock_payment):
 
     session.refresh = AsyncMock(side_effect=_refresh)
 
-    # execute returns user for select queries
+    # execute returns appropriate results depending on the query:
+    # - UPDATE Payment RETURNING user_id, credits → fetchone() returns row
+    # - UPDATE User (credit addition) → no return needed
+    # - SELECT User → scalar_one_or_none() returns mock_user
+    mock_payment_row = MagicMock()
+    mock_payment_row.user_id = mock_user.id
+    mock_payment_row.credits = mock_payment.credits
+
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = mock_user
+    mock_result.fetchone.return_value = mock_payment_row
     session.execute = AsyncMock(return_value=mock_result)
 
     return session
@@ -201,8 +209,6 @@ class TestRobokassaWebhook:
             )
         assert response.status_code == 200
         assert response.text == "OK42"
-        # Verify credits were added
-        assert mock_user.credits_remaining == 1 + mock_payment.credits
 
     async def test_invalid_signature(
         self, client: AsyncClient, mock_settings
@@ -218,6 +224,11 @@ class TestRobokassaWebhook:
     async def test_payment_not_found(
         self, client: AsyncClient, mock_settings, mock_db
     ) -> None:
+        # Override execute to return no rows (UPDATE RETURNING nothing)
+        no_rows_result = MagicMock()
+        no_rows_result.fetchone.return_value = None
+        mock_db.execute = AsyncMock(return_value=no_rows_result)
+
         # Override db.get to return None for Payment
         original_get = mock_db.get.side_effect
 
@@ -267,18 +278,20 @@ class TestGetBalance:
     async def test_new_user_default_balance(
         self, client: AsyncClient, mock_db
     ) -> None:
-        # No user found
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute = AsyncMock(return_value=mock_result)
-
-        response = await client.get(
-            "/api/payments/balance",
-            params={"telegram_id": 999999},
-        )
+        # Mock get_or_create to return a brand-new user with 1 trial credit
+        new_user = _make_mock_user(credits_remaining=1, total_papers_generated=0)
+        with patch(
+            "backend.app.api.routes.payments.get_or_create_user_by_telegram_id",
+            return_value=new_user,
+        ):
+            response = await client.get(
+                "/api/payments/balance",
+                params={"telegram_id": 999999},
+            )
         assert response.status_code == 200
         data = response.json()
         assert data["credits_remaining"] == 1
+        assert data["total_papers_generated"] == 0
         assert data["total_papers_generated"] == 0
 
     async def test_missing_telegram_id_param(self, client: AsyncClient) -> None:

@@ -170,8 +170,8 @@ class BibliographyRegistry(BaseModel):
             return "Источники не предоставлены."
 
         # Build lookup: normalized_url → source (primary), title → source (fallback)
-        by_url: dict[str, "Source"] = {}
-        by_title: dict[str, "Source"] = {}
+        by_url: dict[str, Source] = {}
+        by_title: dict[str, Source] = {}
         for source in sources:
             if source.url:
                 by_url[self._normalize_url(source.url)] = source

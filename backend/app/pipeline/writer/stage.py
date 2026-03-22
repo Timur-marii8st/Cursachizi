@@ -244,7 +244,7 @@ class WriterStage:
 
         # Ensure each section has at least 3 sources (wrap around if needed)
         min_per_section = min(3, len(all_nums))
-        for i, assigned in enumerate(assignments):
+        for _i, assigned in enumerate(assignments):
             while len(assigned) < min_per_section:
                 # Add sources from the pool that aren't already assigned
                 for num in all_nums:

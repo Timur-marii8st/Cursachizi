@@ -196,14 +196,14 @@ class TestGetJob:
 
 class TestListJobs:
     async def test_list_jobs(self, client: AsyncClient) -> None:
-        response = await client.get("/api/jobs")
+        response = await client.get("/api/jobs", params={"telegram_id": 12345})
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
         assert len(data) >= 1
 
     async def test_list_jobs_with_params(self, client: AsyncClient) -> None:
-        response = await client.get("/api/jobs?limit=5&offset=0")
+        response = await client.get("/api/jobs?limit=5&offset=0&telegram_id=12345")
         assert response.status_code == 200
 
 
@@ -291,6 +291,7 @@ class TestApiKeyEnforcement:
                 response = await c.get(
                     "/api/jobs",
                     headers={"X-API-Key": "secret-key-123"},
+                    params={"telegram_id": 12345},
                 )
                 assert response.status_code == 200
 
@@ -304,7 +305,7 @@ class TestReferenceUploadSec005:
         """Real ZIP magic bytes (PK\\x03\\x04) should pass validation and reach S3 upload."""
         sample_job.status = "pending"
         docx_bytes = b"PK\x03\x04" + b"\x00" * 100
-        with patch("backend.app.services.storage.upload_document", return_value=None):
+        with patch("backend.app.api.routes.jobs.upload_document", return_value=None):
             response = await client.post(
                 f"/api/jobs/{sample_job.id}/reference",
                 files={"file": ("template.docx", docx_bytes, "application/octet-stream")},
@@ -350,37 +351,30 @@ class TestRateLimitSec002:
         """Direct client: X-Forwarded-For header must be ignored for rate-limit key."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
+        captured_key: list[str] = []
+
+        fake_redis = AsyncMock()
+        fake_redis.eval = AsyncMock(side_effect=lambda *a, **kw: (captured_key.append(a[2]) or 1))
+        fake_redis.ttl = AsyncMock(return_value=3600)
+
         # Connecting from 10.0.0.5 (untrusted), claiming to be 1.2.3.4 via XFF
         mock_request = MagicMock()
         mock_request.client.host = "10.0.0.5"
         mock_request.headers = {"x-forwarded-for": "1.2.3.4"}
-        mock_request.app.state.redis_pool = None
+        mock_request.app.state.redis_pool = fake_redis
 
-        captured_key: list[str] = []
-
-        async def fake_incr(key: str) -> int:
-            captured_key.append(key)
-            return 1
-
-        fake_redis = AsyncMock()
-        fake_redis.incr = fake_incr
-        fake_redis.expire = AsyncMock()
-        fake_redis.ttl = AsyncMock(return_value=3600)
-
-        with (
-            patch("backend.app.api.deps.get_settings") as mock_settings,
-            patch("backend.app.api.deps.redis.from_url", return_value=fake_redis),
-        ):
+        with patch("backend.app.api.deps.get_settings") as mock_settings:
             settings = MagicMock()
             settings.rate_limit_per_user = "10/hour"
             settings.trusted_proxies = frozenset()  # no trusted proxies configured
             settings.is_production = False
+            settings.internal_api_key = ""
             mock_settings.return_value = settings
 
             await enforce_job_rate_limit(mock_request, x_api_key=None)
 
         # Key must use the direct connecting IP, not the spoofed XFF value
-        assert captured_key, "Redis incr was not called"
+        assert captured_key, "Redis eval was not called"
         assert "10.0.0.5" in captured_key[0]
         assert "1.2.3.4" not in captured_key[0]
 
@@ -388,30 +382,23 @@ class TestRateLimitSec002:
         """When connecting from a known proxy IP, X-Forwarded-For is used."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
+        captured_key: list[str] = []
+
+        fake_redis = AsyncMock()
+        fake_redis.eval = AsyncMock(side_effect=lambda *a, **kw: (captured_key.append(a[2]) or 1))
+        fake_redis.ttl = AsyncMock(return_value=3600)
+
         mock_request = MagicMock()
         mock_request.client.host = "10.0.0.1"  # trusted proxy
         mock_request.headers = {"x-forwarded-for": "203.0.113.42"}
-        mock_request.app.state.redis_pool = None
+        mock_request.app.state.redis_pool = fake_redis
 
-        captured_key: list[str] = []
-
-        async def fake_incr(key: str) -> int:
-            captured_key.append(key)
-            return 1
-
-        fake_redis = AsyncMock()
-        fake_redis.incr = fake_incr
-        fake_redis.expire = AsyncMock()
-        fake_redis.ttl = AsyncMock(return_value=3600)
-
-        with (
-            patch("backend.app.api.deps.get_settings") as mock_settings,
-            patch("backend.app.api.deps.redis.from_url", return_value=fake_redis),
-        ):
+        with patch("backend.app.api.deps.get_settings") as mock_settings:
             settings = MagicMock()
             settings.rate_limit_per_user = "10/hour"
             settings.trusted_proxies = frozenset({"10.0.0.1"})  # proxy is trusted
             settings.is_production = False
+            settings.internal_api_key = ""
             mock_settings.return_value = settings
 
             await enforce_job_rate_limit(mock_request, x_api_key=None)
