@@ -125,10 +125,6 @@ def extract_and_renumber_references(
 
     for section, local_refs in cleaned_sections:
         content = section.content
-        body_text, _ = _split_reference_block(content)
-        body_text = body_text  # this is a string now
-
-        # Rebuild body text from the split
         _, clean_body = _split_reference_block(content)
         # Build local→global map for this section
         local_to_global: dict[int, int] = {}

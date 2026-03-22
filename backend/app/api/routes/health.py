@@ -29,15 +29,16 @@ async def readiness_check(
     db_error: str | None = None
     redis_error: str | None = None
 
+    settings = get_settings()
+
     try:
         await db.execute(text("SELECT 1"))
         db_ok = True
     except Exception as exc:
-        db_error = str(exc)
+        db_error = str(exc) if settings.debug else "error"
 
     redis_pool = getattr(request.app.state, "redis_pool", None)
     if redis_pool is None:
-        settings = get_settings()
         redis_pool = redis.from_url(settings.redis_url)
         owned = True
     else:
@@ -46,7 +47,7 @@ async def readiness_check(
     try:
         redis_ok = bool(await redis_pool.ping())
     except Exception as exc:
-        redis_error = str(exc)
+        redis_error = str(exc) if settings.debug else "error"
     finally:
         if owned:
             await redis_pool.aclose()

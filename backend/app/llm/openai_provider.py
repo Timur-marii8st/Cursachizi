@@ -16,6 +16,10 @@ class OpenAIProvider(LLMProvider):
         self._client = openai.AsyncOpenAI(api_key=api_key)
         self._default_model = default_model or self.DEFAULT_MODEL
 
+    async def aclose(self) -> None:
+        """Release the underlying HTTP client."""
+        await self._client.close()
+
     async def generate(
         self,
         messages: list[LLMMessage],

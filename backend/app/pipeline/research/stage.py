@@ -1,5 +1,7 @@
 """Complete research stage — orchestrates query expansion, search, scraping, ranking."""
 
+import asyncio
+
 import structlog
 
 from backend.app.llm.provider import LLMProvider
@@ -61,16 +63,33 @@ class ResearchStage:
             model=config.light_model,
         )
 
-        # Step 2: Search across all queries
-        # Guarantee at least 5 results per query regardless of total budget
-        all_sources = []
+        # Step 2: Search across all queries in parallel.
+        # Semaphore caps concurrent requests to respect provider rate limits.
+        # Guarantee at least 5 results per query regardless of total budget.
+        _SEARCH_CONCURRENCY = 3
         per_query = max(config.max_search_results // len(queries), 5)
-        for query in queries:
-            results = await self._search_provider.search(
-                query=query,
-                max_results=per_query,
-            )
-            all_sources.extend(results)
+        search_semaphore = asyncio.Semaphore(_SEARCH_CONCURRENCY)
+
+        async def search_one(query: str) -> list:
+            async with search_semaphore:
+                return await self._search_provider.search(
+                    query=query,
+                    max_results=per_query,
+                )
+
+        search_tasks = [search_one(q) for q in queries]
+        search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+        all_sources = []
+        for i, res in enumerate(search_results):
+            if isinstance(res, Exception):
+                logger.warning(
+                    "search_query_failed",
+                    query=queries[i][:80],
+                    error=str(res),
+                )
+            else:
+                all_sources.extend(res)
 
         logger.info("search_complete", total_raw_sources=len(all_sources))
 

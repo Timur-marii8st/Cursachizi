@@ -254,6 +254,13 @@ def _build_citation_mapping(
         if best_match is not None:
             mapping[local_num] = best_match
             used_registry_nums.add(best_match)
+        else:
+            logger.warning(
+                "citation_mapping_skipped",
+                local_num=local_num,
+                fake_text=fake_text[:80],
+                message=f"Citation [{local_num}] could not be mapped to any registry entry and will remain unresolved.",
+            )
 
     if mapping:
         logger.info(
@@ -299,6 +306,12 @@ def _find_best_match(
     if best_score >= 0.15 and best_num is not None:
         return best_num
 
+    logger.warning(
+        "citation_match_below_threshold",
+        fake_text=fake_text[:80],
+        best_score=round(best_score, 3),
+        message=f"Could not map citation reference '{fake_text[:80]}' to any registry entry (best score: {best_score:.3f}). Citation will be unresolved.",
+    )
     return None
 
 
@@ -364,8 +377,17 @@ def _remap_citations(
             complete_mapping[cited_num] = available[available_idx % len(available)]
             available_idx += 1
         else:
-            # No available numbers — cycle through all registry numbers
-            complete_mapping[cited_num] = (cited_num % registry_size) + 1
+            # No available numbers and citation is out of range — keep original.
+            # Silently replacing with a modulo-derived number would create many-to-one
+            # mappings (e.g. [6],[11],[16] all → [1] when registry_size=5), corrupting
+            # the bibliography. Better to leave the invalid number visible in the document.
+            logger.warning(
+                "citation_no_valid_mapping",
+                citation=cited_num,
+                registry_size=registry_size,
+                message=f"Citation [{cited_num}] has no valid mapping and no fallback — keeping original number. Registry size: {registry_size}",
+            )
+            complete_mapping[cited_num] = cited_num
 
     # Log when all citations are identity-mapped (no bibliography block found)
     identity_mapped = sum(1 for old, new in complete_mapping.items() if old == new)

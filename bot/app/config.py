@@ -1,5 +1,7 @@
 """Telegram bot configuration."""
 
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,5 +19,6 @@ class BotSettings(BaseSettings):
     internal_api_key: str = ""
 
 
+@lru_cache(maxsize=1)
 def get_bot_settings() -> BotSettings:
     return BotSettings()

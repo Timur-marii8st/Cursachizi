@@ -1,5 +1,6 @@
 """FastAPI dependency injection — shared dependencies for route handlers."""
 
+import hmac
 from collections.abc import AsyncGenerator
 
 from fastapi import Header, HTTPException, Request, status
@@ -74,9 +75,22 @@ async def enforce_job_rate_limit(
     # SEC-002: only trust X-Forwarded-For when the direct connecting IP
     # is a known reverse proxy.  Without this check, any client can spoof
     # the header and rotate their apparent IP to bypass rate limiting.
+    #
+    # SEC-003: never use the raw X-API-Key header value as the rate-limit
+    # bucket key without first verifying it matches the configured secret.
+    # An attacker could otherwise rotate arbitrary strings in that header to
+    # get an unlimited number of independent rate-limit buckets, completely
+    # bypassing the per-client limit.  We check the key here only to decide
+    # which identifier to use; rejection of invalid keys is still the sole
+    # responsibility of verify_internal_api_key().
+    expected_key = settings.internal_api_key.strip()
+    key_is_valid = bool(expected_key) and hmac.compare_digest(x_api_key or "", expected_key)
+
     client_host = request.client.host if request.client else "unknown"
-    if (x_api_key or "").strip():
-        client_id = x_api_key.strip()
+    if key_is_valid:
+        # Authenticated bot request — use the shared key as the bucket so
+        # all legitimate bot traffic shares one limit, regardless of origin IP.
+        client_id = "internal_bot"
     elif client_host in settings.trusted_proxies:
         client_id = (
             request.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -124,7 +138,7 @@ def verify_internal_api_key(x_api_key: str | None = Header(default=None)) -> Non
     if not expected_key:
         return
 
-    if x_api_key != expected_key:
+    if not hmac.compare_digest(x_api_key or "", expected_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
@@ -171,17 +185,30 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
         )
 
 
+_vision_llm_provider: "OpenRouterProvider | None" = None
+
+
 def get_vision_llm_provider(settings: Settings | None = None):
-    """Get an OpenRouter provider for vision tasks (visual template matching)."""
+    """Get an OpenRouter provider for vision tasks (visual template matching).
+
+    The provider is constructed once and reused for the lifetime of the
+    process.  Creating a new provider on every call is wasteful: it
+    re-initialises the underlying HTTP client and any connection pool.
+    """
     from backend.app.llm.openrouter import OpenRouterProvider
+
+    global _vision_llm_provider
 
     settings = settings or get_settings()
     if not settings.openrouter_api_key:
         return None
-    return OpenRouterProvider(
-        api_key=settings.openrouter_api_key,
-        default_model=settings.vision_model,
-    )
+
+    if _vision_llm_provider is None:
+        _vision_llm_provider = OpenRouterProvider(
+            api_key=settings.openrouter_api_key,
+            default_model=settings.vision_model,
+        )
+    return _vision_llm_provider
 
 
 def get_search_provider(settings: Settings | None = None) -> SearchProvider:

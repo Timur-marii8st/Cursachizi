@@ -56,9 +56,12 @@ async def main() -> None:
     logger.info("bot_starting")
     bot, dp = create_bot()
 
+    api_client: CourseForgeAPIClient = dp["api_client"]
+
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        await api_client.aclose()
         await bot.session.close()
         logger.info("bot_stopped")
 

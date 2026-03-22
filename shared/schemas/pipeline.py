@@ -4,7 +4,7 @@ from datetime import date
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, PrivateAttr
 
 
 def _coerce_int(v: object) -> int:
@@ -85,6 +85,12 @@ class BibliographyRegistry(BaseModel):
 
     entries: list[BibliographyEntry] = Field(default_factory=list)
 
+    # Private cache attributes — not serialized, rebuilt lazily as needed.
+    _entry_index_cache: dict[int, "BibliographyEntry"] = PrivateAttr(default_factory=dict)
+    _entry_index_len: int = PrivateAttr(default=0)
+    _format_cache: str = PrivateAttr(default="")
+    _format_cache_key: tuple[int, int] = PrivateAttr(default=(-1, -1))
+
     @classmethod
     def from_sources(cls, sources: list["Source"]) -> "BibliographyRegistry":
         """Build a registry from research sources, deduplicating by URL or title."""
@@ -134,6 +140,20 @@ class BibliographyRegistry(BaseModel):
             lines.append(f"[{entry.number}] {entry.formatted_reference}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Normalize a URL for consistent lookup matching.
+
+        Strips scheme, www prefix, trailing slashes, and lowercases so that
+        URLs stored in the registry (original form) and URLs that went through
+        the Ranker's normalization always produce the same key.
+        """
+        url = url.lower().strip().rstrip("/")
+        for prefix in ("https://", "http://", "www."):
+            if url.startswith(prefix):
+                url = url[len(prefix):]
+        return url
+
     def format_with_content(
         self, sources: list["Source"], max_content_entries: int = 15
     ) -> str:
@@ -141,16 +161,20 @@ class BibliographyRegistry(BaseModel):
 
         Includes full text/snippet for the first N sources so LLM has context.
         All source numbers are shown so LLM can cite any of them.
+
+        URLs are normalized before building the lookup dict so that sources
+        whose URLs were transformed by the Ranker (lowercased, scheme stripped,
+        trailing slash removed) still match their registry entries.
         """
         if not self.entries:
             return "Источники не предоставлены."
 
-        # Build lookup: url → source (primary), then title → source (fallback)
-        by_url: dict[str, Source] = {}
-        by_title: dict[str, Source] = {}
+        # Build lookup: normalized_url → source (primary), title → source (fallback)
+        by_url: dict[str, "Source"] = {}
+        by_title: dict[str, "Source"] = {}
         for source in sources:
             if source.url:
-                by_url[source.url] = source
+                by_url[self._normalize_url(source.url)] = source
             title_key = source.title.strip().lower()
             if title_key not in by_title:
                 by_title[title_key] = source
@@ -158,8 +182,8 @@ class BibliographyRegistry(BaseModel):
         lines = []
         content_count = 0
         for entry in self.entries:
-            # Look up source by URL first, then by title
-            source = by_url.get(entry.url) if entry.url else None
+            # Look up source by normalized URL first, then by title
+            source = by_url.get(self._normalize_url(entry.url)) if entry.url else None
             if source is None:
                 source = by_title.get(entry.title.strip().lower())
 
@@ -174,12 +198,39 @@ class BibliographyRegistry(BaseModel):
                 lines.append(f"[{entry.number}] {entry.title}")
         return "\n".join(lines)
 
-    def get_entry(self, number: int) -> BibliographyEntry | None:
-        """Get entry by its global number."""
-        for entry in self.entries:
-            if entry.number == number:
-                return entry
-        return None
+    def get_formatted_content_cached(
+        self, sources: list["Source"], max_content_entries: int = 15
+    ) -> str:
+        """Like format_with_content() but caches the result.
+
+        The cache key is based on the identity of the sources list object and
+        max_content_entries. The cache is invalidated when the sources list
+        object changes or max_content_entries differs. This avoids rebuilding
+        the full lookup dict and formatting all entries on every section write
+        call (typically 15 calls per pipeline run).
+        """
+        cache_key = (id(sources), max_content_entries)
+        if self._format_cache_key != cache_key:
+            self._format_cache = self.format_with_content(sources, max_content_entries)
+            self._format_cache_key = cache_key
+        return self._format_cache
+
+    @property
+    def _entry_index(self) -> dict[int, "BibliographyEntry"]:
+        """Lazy-built O(1) index from entry number to BibliographyEntry.
+
+        Rebuilt only when the number of entries has changed (entries were added
+        or removed). Using entry count as a cheap staleness signal avoids a
+        full equality check on every access.
+        """
+        if self._entry_index_len != len(self.entries):
+            self._entry_index_cache = {e.number: e for e in self.entries}
+            self._entry_index_len = len(self.entries)
+        return self._entry_index_cache
+
+    def get_entry(self, number: int) -> "BibliographyEntry | None":
+        """Get entry by its global number in O(1) via a cached index."""
+        return self._entry_index.get(number)
 
     def validate_citations(self, text: str) -> list[int]:
         """Find citation numbers in text that don't exist in the registry."""

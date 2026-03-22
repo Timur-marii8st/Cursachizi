@@ -173,6 +173,7 @@ async def robokassa_result(
         )
 
     await db.flush()
+    await db.commit()
 
     # Robokassa expects "OK{InvId}" response
     return f"OK{inv_id}"

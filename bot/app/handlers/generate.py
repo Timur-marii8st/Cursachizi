@@ -168,7 +168,6 @@ async def process_confirm(
 ) -> None:
     """User confirmed — create the job."""
     data = await state.get_data()
-    await state.clear()
 
     work_type = WorkType(data.get("work_type", WorkType.COURSEWORK.value))
     work_label = _WORK_TYPE_LABELS[work_type]
@@ -189,12 +188,14 @@ async def process_confirm(
             telegram_id=callback.from_user.id,
         )
         job = await api_client.create_job(job_create)
+        await state.clear()  # Only clear state after the API call succeeds
 
         await callback.message.answer(
             f"Задание создано! ID: {job.id}\n\n"
             f"Используйте /status для проверки прогресса."
         )
     except Exception as e:
+        # State is preserved — user can tap "Подтвердить" again to retry
         await callback.message.answer(
             f"Ошибка при создании задания: {e}\n"
             f"Попробуйте позже или обратитесь в поддержку."

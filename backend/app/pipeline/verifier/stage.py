@@ -1,5 +1,7 @@
 """Complete fact verification stage."""
 
+import asyncio
+
 import structlog
 
 from backend.app.llm.provider import LLMProvider
@@ -67,15 +69,35 @@ class VerifierStage:
         result.total_claims = len(all_claims)
         logger.info("total_claims_extracted", count=len(all_claims))
 
-        # Step 2: Fact-check each claim
-        for claim in all_claims:
-            checked = await self._fact_checker.check_claim(
-                claim=claim,
-                model=config.light_model,
-                max_rounds=config.fact_check_max_rounds,
-            )
+        # Step 2: Fact-check claims in parallel.
+        # Semaphore=5 — fact-checking is lighter than writing so higher concurrency is safe.
+        claim_semaphore = asyncio.Semaphore(5)
+
+        async def check_one(claim):
+            async with claim_semaphore:
+                return await self._fact_checker.check_claim(
+                    claim=claim,
+                    model=config.light_model,
+                    max_rounds=config.fact_check_max_rounds,
+                )
+
+        check_tasks = [check_one(c) for c in all_claims]
+        # return_exceptions=True so a single failing claim doesn't abort the rest
+        checked_results = await asyncio.gather(*check_tasks, return_exceptions=True)
+
+        checked_count = 0
+        for i, checked in enumerate(checked_results):
+            if isinstance(checked, Exception):
+                logger.warning(
+                    "claim_check_failed",
+                    claim_index=i,
+                    error=str(checked),
+                )
+                continue
+
             result.claims.append(checked)
-            result.checked_claims += 1
+            checked_count += 1
+            result.checked_claims = checked_count
 
             if checked.verdict == ClaimVerdict.SUPPORTED:
                 result.supported += 1

@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import httpx
 import structlog
 from arq.connections import RedisSettings
 from botocore.exceptions import ClientError
@@ -23,6 +24,19 @@ from shared.schemas.job import JobStage, JobStatus
 from shared.schemas.pipeline import PipelineConfig
 
 logger = structlog.get_logger()
+
+# Transient-error retry configuration
+_PIPELINE_MAX_RETRIES = 3
+_PIPELINE_RETRY_BASE_DELAY = 2.0  # seconds; delay = base ** (attempt + 1) → 2, 4, 8
+
+# Exception types that indicate a transient failure worth retrying
+_TRANSIENT_EXCEPTIONS = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    asyncio.TimeoutError,
+    TimeoutError,
+)
 
 
 def _format_worker_error(exc: Exception, *, timeout_seconds: int | None = None) -> str:
@@ -108,7 +122,42 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
         additional_instructions = job.additional_instructions
         reference_s3_key = job.reference_s3_key
 
-    try:
+    # ARCH-001: enforce pipeline timeout to prevent indefinite worker blocking
+    timeout_seconds = settings.pipeline_timeout_seconds
+
+    # Resolve reference document once — outside the retry loop, since it comes
+    # from S3 (stable) and we don't want to re-download it on every attempt.
+    reference_docx_bytes = None
+    if reference_s3_key:
+        try:
+            reference_docx_bytes = await asyncio.to_thread(
+                download_document,
+                endpoint_url=settings.s3_endpoint_url,
+                region=settings.s3_region,
+                access_key=settings.s3_access_key,
+                secret_key=settings.s3_secret_key,
+                bucket=settings.s3_bucket_name,
+                object_key=reference_s3_key,
+            )
+        except ClientError as e:
+            logger.error("reference_download_failed", key=reference_s3_key, error=str(e))
+
+    # Build pipeline config once — it is stateless and attempt-independent.
+    config = PipelineConfig(
+        max_search_results=settings.max_search_results,
+        max_sources=settings.max_sources_per_topic,
+        max_tokens_per_section=settings.max_tokens_per_section,
+        writer_model=settings.default_writer_model,
+        light_model=settings.default_light_model,
+        timeout_seconds=settings.pipeline_timeout_seconds,
+    )
+    timeout_seconds = config.timeout_seconds or settings.pipeline_timeout_seconds
+
+    last_error: Exception | None = None
+
+    for attempt in range(_PIPELINE_MAX_RETRIES):
+        # Providers hold open HTTP connections and must be created fresh for each
+        # attempt; the finally block below closes them after every attempt.
         llm = get_llm_provider(settings)
         search = get_search_provider(settings)
 
@@ -123,25 +172,13 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
         vision_llm = get_vision_llm_provider(settings)
 
-        # ARCH-002: use consolidated storage module instead of duplicated S3 code
-        reference_docx_bytes = None
-        if reference_s3_key:
-            try:
-                reference_docx_bytes = await asyncio.to_thread(
-                    download_document,
-                    endpoint_url=settings.s3_endpoint_url,
-                    region=settings.s3_region,
-                    access_key=settings.s3_access_key,
-                    secret_key=settings.s3_secret_key,
-                    bucket=settings.s3_bucket_name,
-                    object_key=reference_s3_key,
-                )
-            except ClientError as e:
-                logger.error("reference_download_failed", key=reference_s3_key, error=str(e))
-        elif settings.visual_match_enabled and vision_llm:
-            # Use default GOST reference
+        # Resolve default GOST reference when no user reference was supplied.
+        # Done inside the loop so a fresh bytes object is available each attempt
+        # (the object itself is immutable; this is just a guard against None).
+        _effective_reference = reference_docx_bytes
+        if _effective_reference is None and settings.visual_match_enabled and vision_llm:
             from backend.app.pipeline.formatter.gost_reference import get_default_reference
-            reference_docx_bytes = get_default_reference()
+            _effective_reference = get_default_reference()
 
         orchestrator = PipelineOrchestrator(
             llm=llm, search=search, translator=translator,
@@ -149,18 +186,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
         )
         callback = JobProgressCallback(job_id)
 
-        config = PipelineConfig(
-            max_search_results=settings.max_search_results,
-            max_sources=settings.max_sources_per_topic,
-            max_tokens_per_section=settings.max_tokens_per_section,
-            writer_model=settings.default_writer_model,
-            light_model=settings.default_light_model,
-            timeout_seconds=settings.pipeline_timeout_seconds,
-        )
-
         try:
-            # ARCH-001: enforce pipeline timeout to prevent indefinite worker blocking
-            timeout_seconds = config.timeout_seconds or settings.pipeline_timeout_seconds
             result = await asyncio.wait_for(
                 orchestrator.run(
                     topic=topic,
@@ -171,7 +197,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
                     work_type=work_type,
                     config=config,
                     callback=callback,
-                    reference_docx_bytes=reference_docx_bytes,
+                    reference_docx_bytes=_effective_reference,
                 ),
                 timeout=timeout_seconds,
             )
@@ -228,10 +254,48 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
                 await session.commit()
 
-            logger.info("pipeline_worker_complete", job_id=job_id)
+            logger.info("pipeline_worker_complete", job_id=job_id, attempt=attempt + 1)
             return f"Job {job_id} completed successfully"
+
+        except _TRANSIENT_EXCEPTIONS as e:
+            last_error = e
+            if attempt < _PIPELINE_MAX_RETRIES - 1:
+                delay = _PIPELINE_RETRY_BASE_DELAY ** (attempt + 1)
+                logger.warning(
+                    "pipeline_worker_transient_error_retry",
+                    job_id=job_id,
+                    attempt=attempt + 1,
+                    max_retries=_PIPELINE_MAX_RETRIES,
+                    error_type=e.__class__.__name__,
+                    error=str(e),
+                    retry_in_seconds=delay,
+                )
+                # Job stays RUNNING during retries — do NOT set status to FAILED here.
+            else:
+                logger.error(
+                    "pipeline_worker_transient_error_exhausted",
+                    job_id=job_id,
+                    attempt=attempt + 1,
+                    error_type=e.__class__.__name__,
+                    error=str(e),
+                )
+
+        except Exception as e:
+            # Non-transient error (programming error, validation failure, etc.) —
+            # do not retry; break immediately to permanent-failure handling.
+            last_error = e
+            logger.error(
+                "pipeline_worker_non_transient_error",
+                job_id=job_id,
+                attempt=attempt + 1,
+                error_type=e.__class__.__name__,
+                error=str(e),
+            )
+            break
+
         finally:
-            # FIX-002: close all provider clients to prevent TCP connection leaks
+            # FIX-002: close all provider clients to prevent TCP connection leaks.
+            # Runs after every attempt (success, transient failure, or hard failure).
             if hasattr(llm, "aclose"):
                 await llm.aclose()
             if vision_llm is not None and hasattr(vision_llm, "aclose"):
@@ -241,14 +305,22 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             if translator is not None and hasattr(translator, "aclose"):
                 await translator.aclose()
 
-    except TimeoutError:
+        # Only reached on transient error with retries remaining — sleep then loop.
+        if attempt < _PIPELINE_MAX_RETRIES - 1:
+            await asyncio.sleep(_PIPELINE_RETRY_BASE_DELAY ** (attempt + 1))
+
+    # ------------------------------------------------------------------ #
+    # All attempts exhausted — mark job as permanently failed.            #
+    # ------------------------------------------------------------------ #
+    assert last_error is not None  # loop always sets this before reaching here
+
+    if isinstance(last_error, (TimeoutError, asyncio.TimeoutError)):
         logger.error(
             "pipeline_worker_timed_out",
             job_id=job_id,
             timeout_seconds=timeout_seconds,
             exc_info=True,
         )
-
         async with AsyncSessionLocal() as session:
             job = await session.get(Job, job_id)
             stage = job.stage if job else ""
@@ -268,24 +340,23 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
 
         return f"Job {job_id} failed: {error_message}"
 
-    except Exception as e:
-        error_message = _format_worker_error(e, timeout_seconds=timeout_seconds)
-        logger.error(
-            "pipeline_worker_failed",
-            job_id=job_id,
-            error=error_message,
-            error_type=e.__class__.__name__,
-        )
+    error_message = _format_worker_error(last_error, timeout_seconds=timeout_seconds)
+    logger.error(
+        "pipeline_worker_failed",
+        job_id=job_id,
+        error=error_message,
+        error_type=last_error.__class__.__name__,
+    )
 
-        async with AsyncSessionLocal() as session:
-            job = await session.get(Job, job_id)
-            if job:
-                job.status = JobStatus.FAILED
-                job.error_message = error_message[:2000]
-                job.updated_at = datetime.now(UTC)
-                await session.commit()
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Job, job_id)
+        if job:
+            job.status = JobStatus.FAILED
+            job.error_message = error_message[:2000]
+            job.updated_at = datetime.now(UTC)
+            await session.commit()
 
-        return f"Job {job_id} failed: {error_message}"
+    return f"Job {job_id} failed: {error_message}"
 
 
 class WorkerSettings:

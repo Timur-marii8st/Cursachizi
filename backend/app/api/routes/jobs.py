@@ -6,7 +6,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from arq.connections import ArqRedis
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy import update as sql_update
@@ -162,7 +162,7 @@ async def get_job(
 
 @router.get("", response_model=list[JobResponse])
 async def list_jobs(
-    telegram_id: int | None = None,
+    telegram_id: int = Query(...),
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -171,9 +171,7 @@ async def list_jobs(
 
     FIX-004: Without telegram_id filter, all users' jobs were exposed.
     """
-    query = select(Job).order_by(Job.created_at.desc())
-    if telegram_id is not None:
-        query = query.join(User).where(User.telegram_id == telegram_id)
+    query = select(Job).join(User).where(User.telegram_id == telegram_id).order_by(Job.created_at.desc())
     query = query.limit(limit).offset(offset)
     result = await db.execute(query)
     jobs = result.scalars().all()
@@ -210,6 +208,7 @@ async def cancel_job(
     job.updated_at = datetime.now(UTC)
     await db.flush()
     await db.refresh(job)
+    await db.commit()
     return _job_to_response(job)
 
 

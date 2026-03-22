@@ -1,5 +1,7 @@
 """Complete writer stage — generates all coursework content."""
 
+import asyncio
+
 import structlog
 
 from backend.app.llm.provider import LLMProvider
@@ -120,30 +122,79 @@ class WriterStage:
             bibliography, len(body_section_titles)
         )
 
+        # Build the flat list of (chapter, section_title, required_nums) tasks
+        # in order so that asyncio.gather preserves document order.
+        write_tasks_meta: list[tuple] = []  # (chapter, section_title, required_nums)
         body_idx = 0
         for chapter in outline.chapters:
             logger.info("writing_chapter", chapter=chapter.number, title=chapter.title[:50])
             sections_to_write = chapter.subsections if chapter.subsections else [chapter.title]
-
             for section_title in sections_to_write:
                 required_nums = source_assignments[body_idx] if body_idx < len(source_assignments) else []
                 body_idx += 1
-                section = await self._section_writer.write_section(
+                write_tasks_meta.append((chapter, section_title, required_nums))
+
+        # Snapshot of sections written so far (intro only) — used as coherence
+        # context for all parallel body sections.  Each section sees the same
+        # previous context; this is the correct trade-off when writing in
+        # parallel (full sequential context is impossible without serialising).
+        previous_sections_snapshot = list(all_sections)
+
+        # Semaphore limits concurrent LLM calls to avoid provider rate limits.
+        semaphore = asyncio.Semaphore(3)
+        progress_lock = asyncio.Lock()
+
+        async def write_one_section(
+            chapter,
+            section_title: str,
+            required_nums: list[int],
+        ) -> SectionContent:
+            async with semaphore:
+                return await self._section_writer.write_section(
                     paper_title=outline.title,
                     chapter=chapter,
                     section_title=section_title,
                     sources=research.sources,
-                    previous_sections=all_sections,
+                    previous_sections=previous_sections_snapshot,
                     target_words=words_per_section,
                     additional_instructions=additional_instructions,
                     model=model,
                     bibliography=bibliography,
                     required_source_nums=required_nums,
                 )
-                all_sections.append(section)
+
+        async def write_one_with_progress(
+            chapter,
+            section_title: str,
+            required_nums: list[int],
+        ) -> SectionContent:
+            nonlocal sections_done
+            section = await write_one_section(chapter, section_title, required_nums)
+            async with progress_lock:
                 sections_done += 1
-                if progress_callback:
-                    await progress_callback(sections_done, total_sections)
+                done_snapshot = sections_done
+            if progress_callback:
+                await progress_callback(done_snapshot, total_sections)
+            return section
+
+        tasks = [
+            write_one_with_progress(ch, st, rn)
+            for ch, st, rn in write_tasks_meta
+        ]
+        # gather preserves order; return_exceptions lets us handle partial failures
+        body_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, result in enumerate(body_results):
+            if isinstance(result, Exception):
+                ch, st, _ = write_tasks_meta[i]
+                logger.error(
+                    "section_write_failed",
+                    chapter=ch.number,
+                    section=st[:60],
+                    error=str(result),
+                )
+            else:
+                all_sections.append(result)
 
         # Step 3: Write conclusion
         logger.info("writing_conclusion")
