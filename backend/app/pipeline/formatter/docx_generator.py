@@ -109,7 +109,7 @@ class DocxGenerator:
         if intro_sections:
             self._add_heading(doc, "ВВЕДЕНИЕ", level=1, numbered=False)
             intro_text = self._strip_leading_heading(intro_sections[0].content, "ВВЕДЕНИЕ")
-            self._add_body_text(doc, intro_text)
+            self._add_body_text(doc, intro_text, work_type)
             doc.add_page_break()
 
         # Chapters
@@ -130,7 +130,7 @@ class DocxGenerator:
                 self._add_heading(doc, section.section_title, level=2)
                 # Section body (strip duplicate heading if present)
                 body = self._strip_leading_heading(section.content, section.section_title)
-                self._add_body_text(doc, body)
+                self._add_body_text(doc, body, work_type)
 
             doc.add_page_break()
 
@@ -141,7 +141,7 @@ class DocxGenerator:
             concl_text = self._strip_leading_heading(
                 conclusion_sections[0].content, "ЗАКЛЮЧЕНИЕ"
             )
-            self._add_body_text(doc, concl_text)
+            self._add_body_text(doc, concl_text, work_type)
             doc.add_page_break()
 
         # Bibliography — prefer registry, then extracted inline refs, then raw sources
@@ -307,10 +307,17 @@ class DocxGenerator:
         text = re.sub(r"  +", " ", text)
         return text
 
-    def _add_body_text(self, doc: Document, text: str) -> None:
+    def _add_body_text(
+        self,
+        doc: Document,
+        text: str,
+        work_type: WorkType = WorkType.COURSEWORK,
+    ) -> None:
         """Add body text with proper ГОСТ formatting.
 
         Strips markdown/HTML artifacts and splits into paragraphs.
+        For coursework, citations [N] are rendered as superscript numbers.
+        For articles, citations remain in square brackets [N].
         """
         t = self._template
         body_style = t.body
@@ -338,10 +345,20 @@ class DocxGenerator:
             parts = re.split(r"(\[\d+\])", para_text)
             for part in parts:
                 if re.match(r"\[\d+\]", part):
-                    run = p.add_run(part)
-                    run.font.name = body_style.font.name
-                    run.font.size = Pt(body_style.font.size_pt)
-                    run.font.bold = False
+                    if work_type == WorkType.COURSEWORK:
+                        # Superscript number without brackets: [1] → ¹
+                        citation_num = part.strip("[]")
+                        run = p.add_run(citation_num)
+                        run.font.name = body_style.font.name
+                        run.font.size = Pt(body_style.font.size_pt)
+                        run.font.superscript = True
+                        run.font.bold = False
+                    else:
+                        # Articles: keep [N] as-is
+                        run = p.add_run(part)
+                        run.font.name = body_style.font.name
+                        run.font.size = Pt(body_style.font.size_pt)
+                        run.font.bold = False
                 else:
                     run = p.add_run(part)
                     run.font.name = body_style.font.name
