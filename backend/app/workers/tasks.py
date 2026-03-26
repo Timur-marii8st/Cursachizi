@@ -122,6 +122,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
         additional_instructions = job.additional_instructions
         reference_s3_key = job.reference_s3_key
         job_pipeline_config = job.pipeline_config if isinstance(job.pipeline_config, dict) else {}
+        custom_outline = job_pipeline_config.get("custom_outline", "")
 
     # ARCH-001: enforce pipeline timeout to prevent indefinite worker blocking
     timeout_seconds = settings.pipeline_timeout_seconds
@@ -202,6 +203,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
                     config=config,
                     callback=callback,
                     reference_docx_bytes=_effective_reference,
+                    custom_outline=custom_outline,
                 ),
                 timeout=timeout_seconds,
             )

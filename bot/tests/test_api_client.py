@@ -86,6 +86,45 @@ class TestCourseForgeAPIClient:
         assert sent_body["work_type"] == "article"
 
     @respx.mock
+    async def test_create_job_with_custom_outline(self, api_client: CourseForgeAPIClient) -> None:
+        route = respx.post("http://test-api:8000/api/jobs").mock(
+            return_value=httpx.Response(
+                201,
+                json={
+                    "id": "outline-job-id",
+                    "status": "pending",
+                    "work_type": "coursework",
+                    "topic": "Валюта",
+                    "university": "",
+                    "discipline": "Финансовое право",
+                    "page_count": 35,
+                    "language": "ru",
+                    "template_id": None,
+                    "progress": None,
+                    "document_url": None,
+                    "error_message": None,
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "updated_at": "2025-01-01T00:00:00Z",
+                    "completed_at": None,
+                },
+            )
+        )
+
+        custom_plan = "Глава 1. Понятие валюты\n1.1. Сущность валюты"
+        job = await api_client.create_job(
+            JobCreate(
+                topic="Валюта",
+                discipline="Финансовое право",
+                page_count=35,
+                custom_outline=custom_plan,
+            )
+        )
+
+        assert job.id == "outline-job-id"
+        sent_body = json.loads(route.calls.last.request.content)
+        assert sent_body["custom_outline"] == custom_plan
+
+    @respx.mock
     async def test_get_job(self, api_client: CourseForgeAPIClient) -> None:
         respx.get("http://test-api:8000/api/jobs/abc123").mock(
             return_value=httpx.Response(

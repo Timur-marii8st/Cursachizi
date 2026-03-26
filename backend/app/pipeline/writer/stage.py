@@ -32,6 +32,7 @@ class WriterStage:
         page_count: int,
         research: ResearchResult,
         config: PipelineConfig | None = None,
+        custom_outline: str = "",
     ) -> Outline:
         """Generate the coursework outline."""
         config = config or PipelineConfig()
@@ -41,6 +42,7 @@ class WriterStage:
             page_count=page_count,
             research=research,
             model=config.writer_model,
+            custom_outline=custom_outline,
         )
 
     async def write_all_sections(

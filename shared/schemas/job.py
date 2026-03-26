@@ -64,6 +64,11 @@ class JobCreate(BaseModel):
         default=None,
         description="ГОСТ template ID to use. Defaults to ГОСТ 7.32-2017.",
     )
+    custom_outline: str = Field(
+        default="",
+        max_length=3000,
+        description="User-provided custom outline/plan for the work structure",
+    )
     additional_instructions: str = Field(
         default="",
         max_length=2000,

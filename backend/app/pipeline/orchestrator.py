@@ -126,6 +126,7 @@ class PipelineOrchestrator:
         config: PipelineConfig | None = None,
         callback: StageCallback | None = None,
         reference_docx_bytes: bytes | None = None,
+        custom_outline: str = "",
     ) -> PipelineResult:
         """Execute the full pipeline.
 
@@ -251,6 +252,7 @@ class PipelineOrchestrator:
                 page_count=page_count,
                 research=result.research,
                 config=config,
+                custom_outline=custom_outline,
             )
             section_label = "разделов" if is_article else "глав"
             await callback.on_stage_complete(

@@ -3,6 +3,7 @@
 from bot.app.keyboards.inline import (
     get_confirm_keyboard,
     get_page_count_keyboard,
+    get_plan_question_keyboard,
     get_work_type_keyboard,
 )
 from shared.schemas.job import WorkType
@@ -55,6 +56,20 @@ class TestPageCountKeyboard:
             for btn in row
         }
         assert page_counts == {20, 25, 30, 35, 40, 50}
+
+
+class TestPlanQuestionKeyboard:
+    def test_has_yes_and_no(self) -> None:
+        kb = get_plan_question_keyboard()
+        all_buttons = [btn for row in kb.inline_keyboard for btn in row]
+        callback_data = [btn.callback_data for btn in all_buttons]
+
+        assert "hasplan:yes" in callback_data
+        assert "hasplan:no" in callback_data
+
+    def test_has_one_row(self) -> None:
+        kb = get_plan_question_keyboard()
+        assert len(kb.inline_keyboard) == 1
 
 
 class TestConfirmKeyboard:

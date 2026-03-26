@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, Message
 from bot.app.keyboards.inline import (
     get_confirm_keyboard,
     get_page_count_keyboard,
+    get_plan_question_keyboard,
     get_source_count_keyboard,
     get_work_type_keyboard,
 )
@@ -32,6 +33,8 @@ class GenerateForm(StatesGroup):
     waiting_university = State()
     waiting_page_count = State()
     waiting_source_count = State()
+    waiting_plan_question = State()
+    waiting_plan_text = State()
     waiting_instructions = State()
     waiting_confirmation = State()
 
@@ -153,8 +156,54 @@ async def process_source_count(callback: CallbackQuery, state: FSMContext) -> No
 
     await state.update_data(source_count=source_count)
     await callback.message.edit_text(f"Источников: {source_count}")
+    await state.set_state(GenerateForm.waiting_plan_question)
+    await callback.message.answer(
+        "У вас есть готовый план (оглавление) работы?",
+        reply_markup=get_plan_question_keyboard(),
+    )
+
+
+@router.callback_query(GenerateForm.waiting_plan_question, F.data == "hasplan:yes")
+async def process_plan_yes(callback: CallbackQuery, state: FSMContext) -> None:
+    """User has a custom plan — ask them to send it."""
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(GenerateForm.waiting_plan_text)
+    await callback.message.answer(
+        "Отправьте ваш план (оглавление) одним сообщением.\n\n"
+        "Например:\n"
+        "Глава 1. Теоретические основы\n"
+        "1.1. Основные понятия\n"
+        "1.2. Обзор литературы\n"
+        "Глава 2. Практическая часть\n"
+        "2.1. Методология\n"
+        "2.2. Результаты"
+    )
+
+
+@router.callback_query(GenerateForm.waiting_plan_question, F.data == "hasplan:no")
+async def process_plan_no(callback: CallbackQuery, state: FSMContext) -> None:
+    """User doesn't have a plan — skip to instructions."""
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.update_data(custom_outline="")
     await state.set_state(GenerateForm.waiting_instructions)
     await callback.message.answer(
+        "Есть дополнительные требования к работе?\n\n"
+        "Например: «Обязательно рассмотреть зарубежный опыт», "
+        "«Включить анализ статистики за последние 5 лет»\n\n"
+        "Отправьте «-» чтобы пропустить."
+    )
+
+
+@router.message(GenerateForm.waiting_plan_text)
+async def process_plan_text(message: Message, state: FSMContext) -> None:
+    """Receive the custom outline text."""
+    if not message.text or len(message.text) < 10:
+        await message.answer("План слишком короткий. Отправьте более подробный план (минимум 10 символов).")
+        return
+
+    await state.update_data(custom_outline=message.text)
+    await state.set_state(GenerateForm.waiting_instructions)
+    await message.answer(
         "Есть дополнительные требования к работе?\n\n"
         "Например: «Обязательно рассмотреть зарубежный опыт», "
         "«Включить анализ статистики за последние 5 лет»\n\n"
@@ -182,6 +231,7 @@ async def process_instructions(message: Message, state: FSMContext) -> None:
         f"🏫 Университет: {data.get('university') or 'не указан'}\n"
         f"📄 Страниц: {data['page_count']}\n"
         f"📖 Источников: {data.get('source_count', 20)}\n"
+        f"📐 План: {'предоставлен' if data.get('custom_outline') else 'будет сгенерирован'}\n"
         f"💬 Доп. требования: {data.get('additional_instructions') or 'нет'}"
     )
 
@@ -214,6 +264,7 @@ async def process_confirm(
             university=data.get("university", ""),
             page_count=data["page_count"],
             source_count=data.get("source_count", 20),
+            custom_outline=data.get("custom_outline", ""),
             additional_instructions=data.get("additional_instructions", ""),
             telegram_id=callback.from_user.id,
         )

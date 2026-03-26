@@ -46,6 +46,17 @@ def get_source_count_keyboard(work_type: WorkType = WorkType.COURSEWORK) -> Inli
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def get_plan_question_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard asking if the user has a custom outline/plan."""
+    buttons = [
+        [
+            InlineKeyboardButton(text="Да, есть план", callback_data="hasplan:yes"),
+            InlineKeyboardButton(text="Нет, сгенерировать", callback_data="hasplan:no"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_confirm_keyboard() -> InlineKeyboardMarkup:
     """Confirmation keyboard (Yes/No)."""
     buttons = [

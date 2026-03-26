@@ -138,8 +138,11 @@ async def create_job(
     db.add(job)
     await db.flush()
 
-    # Store user-selected source count in pipeline_config for the worker
-    job.pipeline_config = {"max_sources": job_in.source_count}
+    # Store user-selected options in pipeline_config for the worker
+    pipeline_cfg: dict = {"max_sources": job_in.source_count}
+    if job_in.custom_outline:
+        pipeline_cfg["custom_outline"] = job_in.custom_outline
+    job.pipeline_config = pipeline_cfg
 
     await db.refresh(job)
 

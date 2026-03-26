@@ -437,6 +437,50 @@ class TestArticleOutliner:
         assert outline.conclusion_points == []
 
 
+    async def test_custom_outline_included_in_prompt(
+        self,
+        article_outliner: ArticleOutliner,
+        mock_llm: MockLLMProvider,
+        sample_research: ResearchResult,
+    ) -> None:
+        """Custom outline text should appear in the LLM prompt for articles."""
+        mock_llm.set_responses([_valid_article_outline_json()])
+
+        custom_plan = "1. Введение\n2. Обзор литературы\n3. Результаты\n4. Заключение"
+
+        await article_outliner.generate(
+            topic="Тема",
+            discipline="Биология",
+            page_count=10,
+            research=sample_research,
+            custom_outline=custom_plan,
+        )
+
+        sent_content = mock_llm.calls[0]["messages"][0].content
+        assert "ПОЛЬЗОВАТЕЛЬСКИЙ ПЛАН" in sent_content
+        assert "Обзор литературы" in sent_content
+
+    async def test_no_custom_outline_block_when_empty(
+        self,
+        article_outliner: ArticleOutliner,
+        mock_llm: MockLLMProvider,
+        sample_research: ResearchResult,
+    ) -> None:
+        """Empty custom_outline should not inject the block into the prompt."""
+        mock_llm.set_responses([_valid_article_outline_json()])
+
+        await article_outliner.generate(
+            topic="Тема",
+            discipline="Физика",
+            page_count=10,
+            research=sample_research,
+            custom_outline="",
+        )
+
+        sent_content = mock_llm.calls[0]["messages"][0].content
+        assert "ПОЛЬЗОВАТЕЛЬСКИЙ ПЛАН" not in sent_content
+
+
 class TestArticleOutlinerSourceSummary:
     """Tests for the _summarize_sources static method."""
 

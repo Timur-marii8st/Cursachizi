@@ -30,6 +30,7 @@ class ArticleWriterStage:
         page_count: int,
         research: ResearchResult,
         config: PipelineConfig | None = None,
+        custom_outline: str = "",
     ) -> Outline:
         config = config or PipelineConfig()
         return await self._outliner.generate(
@@ -38,6 +39,7 @@ class ArticleWriterStage:
             page_count=page_count,
             research=research,
             model=config.writer_model,
+            custom_outline=custom_outline,
         )
 
     async def write_all_sections(
