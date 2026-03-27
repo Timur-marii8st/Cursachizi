@@ -194,11 +194,26 @@ async def process_plan_no(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+@router.message(GenerateForm.waiting_plan_question)
+async def process_plan_question_text(message: Message, state: FSMContext) -> None:
+    """Handle text input when buttons are expected."""
+    await message.answer(
+        "Пожалуйста, используйте кнопки выше для ответа.",
+        reply_markup=get_plan_question_keyboard(),
+    )
+
+
 @router.message(GenerateForm.waiting_plan_text)
 async def process_plan_text(message: Message, state: FSMContext) -> None:
     """Receive the custom outline text."""
     if not message.text or len(message.text) < 10:
         await message.answer("План слишком короткий. Отправьте более подробный план (минимум 10 символов).")
+        return
+
+    if len(message.text) > 3000:
+        await message.answer(
+            f"План слишком длинный ({len(message.text)} симв.). Максимум 3000 символов."
+        )
         return
 
     await state.update_data(custom_outline=message.text)

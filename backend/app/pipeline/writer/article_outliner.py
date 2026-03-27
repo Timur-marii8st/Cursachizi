@@ -69,10 +69,12 @@ class ArticleOutliner:
         sources_summary = self._summarize_sources(research)
 
         if custom_outline:
+            # Escape braces to prevent format-string injection from user input
+            safe_outline = custom_outline.replace("{", "{{").replace("}", "}}")
             custom_outline_block = (
                 "\nПОЛЬЗОВАТЕЛЬСКИЙ ПЛАН (ОБЯЗАТЕЛЬНО СЛЕДУЙ ЭТОЙ СТРУКТУРЕ):\n"
                 "Пользователь предоставил свою структуру статьи. Следуй ей максимально точно.\n\n"
-                f"{custom_outline}\n"
+                f"{safe_outline}\n"
             )
         else:
             custom_outline_block = ""

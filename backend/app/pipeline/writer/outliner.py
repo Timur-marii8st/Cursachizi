@@ -80,12 +80,14 @@ class Outliner:
 
         # Build custom outline instruction block
         if custom_outline:
+            # Escape braces to prevent format-string injection from user input
+            safe_outline = custom_outline.replace("{", "{{").replace("}", "}}")
             custom_outline_block = (
                 "\nПОЛЬЗОВАТЕЛЬСКИЙ ПЛАН (ОБЯЗАТЕЛЬНО СЛЕДУЙ ЭТОЙ СТРУКТУРЕ):\n"
                 "Пользователь предоставил свой план работы. Ты ДОЛЖЕН следовать этой структуре "
                 "максимально точно, сохраняя названия глав и подразделов. Допускается лишь "
                 "незначительная корректировка формулировок для академического стиля.\n\n"
-                f"{custom_outline}\n"
+                f"{safe_outline}\n"
             )
         else:
             custom_outline_block = ""

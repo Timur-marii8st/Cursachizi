@@ -188,6 +188,43 @@ class TestOutliner:
         sent_prompt = mock_llm.calls[0]["messages"][0].content
         assert "ПОЛЬЗОВАТЕЛЬСКИЙ ПЛАН" not in sent_prompt
 
+    async def test_custom_outline_with_braces_does_not_crash(
+        self,
+        outliner: Outliner,
+        mock_llm: MockLLMProvider,
+        sample_research: ResearchResult,
+    ) -> None:
+        """Custom outline containing { or } should not cause format-string errors."""
+        mock_llm.set_responses([
+            json.dumps({
+                "title": "Тест",
+                "introduction_points": ["Актуальность"],
+                "chapters": [
+                    {
+                        "number": 1,
+                        "title": "Глава 1",
+                        "subsections": ["1.1 Подраздел"],
+                        "description": "Описание",
+                        "estimated_pages": 10,
+                    },
+                ],
+                "conclusion_points": ["Выводы"],
+            })
+        ])
+
+        # This would crash with KeyError if braces are not escaped
+        outline = await outliner.generate(
+            topic="Тест",
+            discipline="",
+            page_count=30,
+            research=sample_research,
+            custom_outline="Глава 1. {цель работы} и задачи\n1.1. Определение {понятия}",
+        )
+
+        assert outline is not None
+        sent_prompt = mock_llm.calls[0]["messages"][0].content
+        assert "цель работы" in sent_prompt
+
     async def test_source_summary_formatting(
         self, outliner: Outliner
     ) -> None:
