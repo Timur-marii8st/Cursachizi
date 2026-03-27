@@ -5,6 +5,7 @@ import json
 import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider
+from backend.app.pipeline.writer.outline_parser import parse_outline_text
 from shared.schemas.pipeline import Outline, OutlineChapter, ResearchResult
 
 logger = structlog.get_logger()
@@ -75,6 +76,19 @@ class Outliner:
         Returns:
             Structured Outline object.
         """
+        # If user provided a custom outline, try direct parsing first (no LLM)
+        if custom_outline:
+            parsed = parse_outline_text(custom_outline, topic=topic, page_count=page_count)
+            if parsed and parsed.chapters:
+                logger.info(
+                    "outline_parsed_directly",
+                    chapters=len(parsed.chapters),
+                    subsections=sum(len(ch.subsections) for ch in parsed.chapters),
+                )
+                return parsed
+            # Parser couldn't recognize structure — fall through to LLM with instructions
+            logger.info("outline_parser_fallback_to_llm")
+
         # Summarize top sources for context
         sources_summary = self._summarize_sources(research)
 

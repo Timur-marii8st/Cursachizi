@@ -321,6 +321,28 @@ class SectionEvaluation(BaseModel):
     rewrite_count: int = 0
 
 
+class ComplianceIssue(BaseModel):
+    """A single issue found by the outline compliance checker."""
+
+    section_title: str
+    chapter_number: int
+    issue_type: str  # "off_topic" | "missing_content" | "insufficient_sources"
+    description: str
+    suggestion: str = ""
+
+
+class ComplianceResult(BaseModel):
+    """Result of outline compliance check."""
+
+    issues: list[ComplianceIssue] = Field(default_factory=list)
+    sections_checked: int = 0
+    sections_compliant: int = 0
+
+    @property
+    def is_compliant(self) -> bool:
+        return len(self.issues) == 0
+
+
 class PipelineConfig(BaseModel):
     """Configuration for a single pipeline run."""
 
@@ -348,3 +370,7 @@ class PipelineConfig(BaseModel):
     max_section_rewrites: int = Field(default=2, ge=0, le=5)
     min_citations_per_section: int = Field(default=4, ge=0, le=15)
     enable_humanizer: bool = False
+
+    # Outline compliance checking (for custom outlines)
+    enable_outline_compliance: bool = True
+    max_compliance_iterations: int = Field(default=2, ge=1, le=4)

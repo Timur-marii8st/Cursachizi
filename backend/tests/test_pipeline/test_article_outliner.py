@@ -437,18 +437,16 @@ class TestArticleOutliner:
         assert outline.conclusion_points == []
 
 
-    async def test_custom_outline_included_in_prompt(
+    async def test_custom_outline_parsed_directly(
         self,
         article_outliner: ArticleOutliner,
         mock_llm: MockLLMProvider,
         sample_research: ResearchResult,
     ) -> None:
-        """Custom outline text should appear in the LLM prompt for articles."""
-        mock_llm.set_responses([_valid_article_outline_json()])
+        """Parseable custom outline should be used directly for articles."""
+        custom_plan = "1. Обзор литературы\n2. Методология\n3. Результаты\n4. Обсуждение"
 
-        custom_plan = "1. Введение\n2. Обзор литературы\n3. Результаты\n4. Заключение"
-
-        await article_outliner.generate(
+        outline = await article_outliner.generate(
             topic="Тема",
             discipline="Биология",
             page_count=10,
@@ -456,9 +454,36 @@ class TestArticleOutliner:
             custom_outline=custom_plan,
         )
 
+        # Parser handles it directly — no LLM call
+        assert len(mock_llm.calls) == 0
+        assert len(outline.chapters) == 4
+        # Articles should have flat structure (no subsections)
+        for ch in outline.chapters:
+            assert ch.subsections == []
+
+    async def test_custom_outline_llm_fallback(
+        self,
+        article_outliner: ArticleOutliner,
+        mock_llm: MockLLMProvider,
+        sample_research: ResearchResult,
+    ) -> None:
+        """Unparseable custom outline should fall back to LLM for articles."""
+        mock_llm.set_responses([_valid_article_outline_json()])
+
+        unparseable = "Теория, потом эксперименты, затем выводы"
+
+        await article_outliner.generate(
+            topic="Тема",
+            discipline="Биология",
+            page_count=10,
+            research=sample_research,
+            custom_outline=unparseable,
+        )
+
+        assert len(mock_llm.calls) == 1
         sent_content = mock_llm.calls[0]["messages"][0].content
         assert "ПОЛЬЗОВАТЕЛЬСКИЙ ПЛАН" in sent_content
-        assert "Обзор литературы" in sent_content
+        assert "эксперименты" in sent_content
 
     async def test_no_custom_outline_block_when_empty(
         self,

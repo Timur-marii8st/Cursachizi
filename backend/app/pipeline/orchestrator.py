@@ -22,6 +22,7 @@ from backend.app.pipeline.writer.citation_fixer import fix_citations
 from backend.app.pipeline.writer.coherence_checker import CoherenceChecker
 from backend.app.pipeline.writer.humanizer import Humanizer, TranslationProvider
 from backend.app.pipeline.writer.intro_conclusion_validator import IntroductionConclusionValidator
+from backend.app.pipeline.writer.outline_compliance_checker import OutlineComplianceChecker
 from backend.app.pipeline.writer.section_evaluator import SectionEvaluator
 from backend.app.pipeline.writer.stage import WriterStage
 from shared.schemas.job import WorkType
@@ -30,6 +31,7 @@ from shared.schemas.pipeline import (
     CHAPTER_INTRO,
     BibliographyRegistry,
     CoherenceResult,
+    ComplianceResult,
     FactCheckResult,
     Outline,
     PipelineConfig,
@@ -52,6 +54,7 @@ class PipelineResult:
     bibliography: BibliographyRegistry | None = None
     sections: list[SectionContent] = field(default_factory=list)
     coherence: CoherenceResult | None = None
+    compliance: ComplianceResult | None = None
     fact_check: FactCheckResult | None = None
     document_bytes: bytes | None = None
     visual_match_results: list[VisualMatchResult] = field(default_factory=list)
@@ -106,6 +109,7 @@ class PipelineOrchestrator:
         self._article_writer_stage = ArticleWriterStage(llm)
         self._section_evaluator = SectionEvaluator(llm)
         self._coherence_checker = CoherenceChecker(llm)
+        self._compliance_checker = OutlineComplianceChecker(llm)
         self._intro_validator = IntroductionConclusionValidator(llm)
         self._humanizer = Humanizer(llm, translator) if translator else None
         self._verifier_stage = VerifierStage(llm, search)
@@ -301,6 +305,22 @@ class PipelineOrchestrator:
                     bibliography=result.bibliography,
                 )
                 total_words = sum(s.word_count for s in result.sections)
+
+            # Stage 3b¼: Outline compliance check (only when custom outline was provided)
+            if custom_outline and config.enable_outline_compliance:
+                result.sections, result.compliance = await self._check_outline_compliance(
+                    outline=result.outline,
+                    sections=result.sections,
+                    research=result.research,
+                    config=config,
+                    callback=callback,
+                    writer_stage=writer_stage,
+                    topic=topic,
+                    discipline=discipline,
+                    page_count=page_count,
+                    additional_instructions=additional_instructions,
+                    bibliography=result.bibliography,
+                )
 
             # Stage 3b½: Introduction/conclusion structural validation (coursework only)
             if not is_article:
@@ -632,6 +652,163 @@ class PipelineOrchestrator:
             )
 
         return updated
+
+    async def _check_outline_compliance(
+        self,
+        outline: Outline,
+        sections: list[SectionContent],
+        research: ResearchResult,
+        config: PipelineConfig,
+        callback: StageCallback,
+        writer_stage: WriterStage | ArticleWriterStage,
+        topic: str,
+        discipline: str,
+        page_count: int,
+        additional_instructions: str,
+        bibliography: BibliographyRegistry | None,
+    ) -> tuple[list[SectionContent], ComplianceResult]:
+        """Check sections against outline and rewrite non-compliant ones.
+
+        Runs up to config.max_compliance_iterations rounds:
+        1. Check compliance of all body sections
+        2. For issues: optionally fetch additional sources, then rewrite section
+        3. Re-check until compliant or iterations exhausted
+        """
+        updated = list(sections)
+        compliance: ComplianceResult | None = None
+        chapters_map = {ch.number: ch for ch in outline.chapters}
+
+        # Compute target words per section (same logic as _evaluate_and_rewrite)
+        body_pages = page_count - 4
+        total_subsections = sum(
+            max(len(ch.subsections), 1) for ch in outline.chapters
+        )
+        target_words = (body_pages * 250) // max(total_subsections, 1)
+
+        for iteration in range(config.max_compliance_iterations):
+            await callback.on_stage_start(
+                "writing",
+                f"Проверка соответствия плану (итерация {iteration + 1})...",
+            )
+
+            compliance = await self._compliance_checker.check(
+                outline=outline,
+                sections=updated,
+                model=config.light_model,
+            )
+
+            if compliance.is_compliant:
+                logger.info(
+                    "compliance_check_passed",
+                    iteration=iteration + 1,
+                    checked=compliance.sections_checked,
+                )
+                await callback.on_stage_progress(
+                    "writing", 100,
+                    f"План соблюдён ({compliance.sections_compliant}/{compliance.sections_checked})",
+                )
+                break
+
+            logger.info(
+                "compliance_issues_found",
+                iteration=iteration + 1,
+                issues=len(compliance.issues),
+            )
+            await callback.on_stage_progress(
+                "writing", 50,
+                f"Найдено {len(compliance.issues)} несоответствий плану, исправляем...",
+            )
+
+            # Fix each issue
+            for issue in compliance.issues:
+                chapter = chapters_map.get(issue.chapter_number)
+                if not chapter:
+                    continue
+
+                # If missing content, try additional research
+                sources = research.sources
+                if issue.issue_type == "missing_content":
+                    try:
+                        extra_results = await self._research_stage.run(
+                            topic=f"{topic}: {issue.section_title}",
+                            discipline=discipline,
+                            config=PipelineConfig(
+                                max_sources=5,
+                                max_search_queries=2,
+                            ),
+                        )
+                        if extra_results.sources:
+                            sources = list(research.sources) + extra_results.sources
+                            # Add new sources to bibliography
+                            if bibliography:
+                                for src in extra_results.sources:
+                                    bibliography.add_source(src)
+                            logger.info(
+                                "compliance_extra_research",
+                                section=issue.section_title[:50],
+                                new_sources=len(extra_results.sources),
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "compliance_extra_research_failed",
+                            section=issue.section_title[:50],
+                            error=str(e),
+                        )
+
+                # Build rewrite instructions from the compliance issue
+                rewrite_instructions = (
+                    f"{additional_instructions}\n\n"
+                    f"ВАЖНО — ИСПРАВЬ СЛЕДУЮЩУЮ ПРОБЛЕМУ:\n"
+                    f"Проблема: {issue.description}\n"
+                    f"Рекомендация: {issue.suggestion}\n"
+                    f"Тип: {issue.issue_type}"
+                )
+
+                # Find the section index and get previous sections for context
+                section_idx = None
+                for i, sec in enumerate(updated):
+                    if (
+                        sec.chapter_number == issue.chapter_number
+                        and issue.section_title.lower() in sec.section_title.lower()
+                    ):
+                        section_idx = i
+                        break
+
+                # Rewrite the section
+                try:
+                    rewritten = await writer_stage._section_writer.write_section(
+                        paper_title=outline.title,
+                        chapter=chapter,
+                        section_title=issue.section_title,
+                        sources=sources,
+                        previous_sections=updated[:section_idx] if section_idx else [],
+                        target_words=target_words,
+                        additional_instructions=rewrite_instructions,
+                        model=config.writer_model,
+                        bibliography=bibliography,
+                    )
+
+                    if section_idx is not None:
+                        updated[section_idx] = rewritten
+                    else:
+                        # Section was missing entirely — append it
+                        # Insert before conclusion (last section)
+                        updated.insert(len(updated) - 1, rewritten)
+
+                    logger.info(
+                        "compliance_section_rewritten",
+                        section=issue.section_title[:50],
+                        chapter=issue.chapter_number,
+                        issue_type=issue.issue_type,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "compliance_rewrite_failed",
+                        section=issue.section_title[:50],
+                        error=str(e),
+                    )
+
+        return updated, compliance or ComplianceResult()
 
     async def _validate_intro_conclusion(
         self,

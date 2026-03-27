@@ -5,6 +5,7 @@ import json
 import structlog
 
 from backend.app.llm.provider import LLMMessage, LLMProvider
+from backend.app.pipeline.writer.outline_parser import parse_outline_text
 from shared.schemas.pipeline import Outline, OutlineChapter, ResearchResult
 
 logger = structlog.get_logger()
@@ -66,6 +67,17 @@ class ArticleOutliner:
         custom_outline: str = "",
     ) -> Outline:
         """Generate a scientific article outline based on research results."""
+        # Try direct parsing first for custom outlines
+        if custom_outline:
+            parsed = parse_outline_text(custom_outline, topic=topic, page_count=page_count)
+            if parsed and parsed.chapters:
+                # Articles have flat structure — clear subsections
+                for ch in parsed.chapters:
+                    ch.subsections = []
+                logger.info("article_outline_parsed_directly", chapters=len(parsed.chapters))
+                return parsed
+            logger.info("article_outline_parser_fallback_to_llm")
+
         sources_summary = self._summarize_sources(research)
 
         if custom_outline:
