@@ -185,30 +185,22 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
         )
 
 
-_vision_llm_provider = None  # OpenRouterProvider | None — lazy import below
-
-
 def get_vision_llm_provider(settings: Settings | None = None):
     """Get an OpenRouter provider for vision tasks (visual template matching).
 
-    The provider is constructed once and reused for the lifetime of the
-    process.  Creating a new provider on every call is wasteful: it
-    re-initialises the underlying HTTP client and any connection pool.
+    The worker closes vision providers after every job attempt, so returning a
+    process-wide singleton risks handing out a closed client to the next job.
     """
     from backend.app.llm.openrouter import OpenRouterProvider
-
-    global _vision_llm_provider
 
     settings = settings or get_settings()
     if not settings.openrouter_api_key:
         return None
 
-    if _vision_llm_provider is None:
-        _vision_llm_provider = OpenRouterProvider(
-            api_key=settings.openrouter_api_key,
-            default_model=settings.vision_model,
-        )
-    return _vision_llm_provider
+    return OpenRouterProvider(
+        api_key=settings.openrouter_api_key,
+        default_model=settings.vision_model,
+    )
 
 
 def get_search_provider(settings: Settings | None = None) -> SearchProvider:

@@ -290,11 +290,15 @@ async def process_confirm(
             f"Задание создано! ID: {job.id}\n\n"
             f"Используйте /status для проверки прогресса."
         )
-    except Exception as e:
+    except RuntimeError as exc:
         # State is preserved — user can tap "Подтвердить" again to retry
         await callback.message.answer(
-            f"Ошибка при создании задания: {e}\n"
+            f"Ошибка при создании задания: {exc}\n"
             f"Попробуйте позже или обратитесь в поддержку."
+        )
+    except Exception:
+        await callback.message.answer(
+            "Ошибка при создании задания. Попробуйте позже или обратитесь в поддержку."
         )
 
 

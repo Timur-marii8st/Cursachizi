@@ -34,8 +34,10 @@ from shared.schemas.pipeline import (
     ComplianceResult,
     FactCheckResult,
     Outline,
+    OutlineChapter,
     PipelineConfig,
     ResearchResult,
+    SectionBrief,
     SectionContent,
     Source,
     VisualMatchResult,
@@ -284,6 +286,12 @@ class PipelineOrchestrator:
                 progress_callback=write_progress,
                 bibliography=result.bibliography,
             )
+            self._ensure_expected_structure(
+                outline=result.outline,
+                sections=result.sections,
+                work_type=work_type_enum,
+                phase="initial writing",
+            )
             total_words = sum(s.word_count for s in result.sections)
             await callback.on_stage_complete(
                 "writing",
@@ -304,6 +312,12 @@ class PipelineOrchestrator:
                     callback=callback,
                     bibliography=result.bibliography,
                 )
+                self._ensure_expected_structure(
+                    outline=result.outline,
+                    sections=result.sections,
+                    work_type=work_type_enum,
+                    phase="section rewrite",
+                )
                 total_words = sum(s.word_count for s in result.sections)
 
             # Stage 3b¼: Outline compliance check (only when custom outline was provided)
@@ -321,6 +335,12 @@ class PipelineOrchestrator:
                     additional_instructions=additional_instructions,
                     bibliography=result.bibliography,
                 )
+                self._ensure_expected_structure(
+                    outline=result.outline,
+                    sections=result.sections,
+                    work_type=work_type_enum,
+                    phase="outline compliance rewrite",
+                )
 
             # Stage 3b½: Introduction/conclusion structural validation (coursework only)
             if not is_article:
@@ -333,6 +353,12 @@ class PipelineOrchestrator:
                     callback=callback,
                     sources=result.research.sources,
                     bibliography=result.bibliography,
+                )
+                self._ensure_expected_structure(
+                    outline=result.outline,
+                    sections=result.sections,
+                    work_type=work_type_enum,
+                    phase="introduction/conclusion validation",
                 )
 
             # Stage 3c: Cross-section coherence check
@@ -350,6 +376,12 @@ class PipelineOrchestrator:
                         coherence_result=coherence,
                         model=config.writer_model,
                     )
+                    self._ensure_expected_structure(
+                        outline=result.outline,
+                        sections=result.sections,
+                        work_type=work_type_enum,
+                        phase="coherence fixes",
+                    )
                 result.coherence = coherence
                 await callback.on_stage_progress(
                     "writing",
@@ -366,6 +398,12 @@ class PipelineOrchestrator:
                 result.sections = await self._humanizer.humanize_all(
                     sections=result.sections,
                     model=config.writer_model,
+                )
+                self._ensure_expected_structure(
+                    outline=result.outline,
+                    sections=result.sections,
+                    work_type=work_type_enum,
+                    phase="humanizer",
                 )
                 total_words = sum(s.word_count for s in result.sections)
                 await callback.on_stage_progress(
@@ -405,6 +443,12 @@ class PipelineOrchestrator:
                             model=config.writer_model,
                         )
                     )
+                    self._ensure_expected_structure(
+                        outline=result.outline,
+                        sections=result.sections,
+                        work_type=work_type_enum,
+                        phase="fact-check corrections",
+                    )
                     result.fact_check.corrections_applied = corrections_applied
                     await callback.on_stage_complete(
                         "fact_checking",
@@ -432,6 +476,22 @@ class PipelineOrchestrator:
                         registry_size=len(result.bibliography.entries),
                     )
                 total_words = sum(s.word_count for s in result.sections)
+
+            result.sections, result.compliance = await self._enforce_final_invariants(
+                outline=result.outline,
+                sections=result.sections,
+                research=result.research,
+                config=config,
+                callback=callback,
+                writer_stage=writer_stage,
+                topic=topic,
+                discipline=discipline,
+                page_count=page_count,
+                additional_instructions=additional_instructions,
+                bibliography=result.bibliography,
+                work_type=work_type_enum,
+                custom_outline=custom_outline,
+            )
 
             # Stage 5: Format
             await callback.on_stage_start("formatting", "Форматируем документ...")
@@ -595,6 +655,7 @@ class PipelineOrchestrator:
         )
         target_words_per_section = (body_pages * 250) // max(total_subsections, 1)
         chapters_map = {ch.number: ch for ch in outline.chapters}
+        section_briefs = self._build_section_briefs(outline)
         updated = list(sections)
 
         rewrites_total = 0
@@ -623,6 +684,11 @@ class PipelineOrchestrator:
                     target_words=target_words_per_section,
                     model=config.writer_model,
                     bibliography=bibliography,
+                    section_brief=self._resolve_section_brief(
+                        section_briefs,
+                        chapter=chapter,
+                        section_title=section.section_title,
+                    ),
                 )
 
                 evaluation = self._section_evaluator.evaluate(
@@ -734,7 +800,7 @@ class PipelineOrchestrator:
                             discipline=discipline,
                             config=PipelineConfig(
                                 max_sources=5,
-                                max_search_queries=2,
+                                max_search_results=10,
                             ),
                         )
                         if extra_results.sources:
@@ -764,24 +830,27 @@ class PipelineOrchestrator:
                     f"Тип: {issue.issue_type}"
                 )
 
+                if issue.missing_topics:
+                    rewrite_instructions += (
+                        "\nРћР‘РЇР—РђРўР•Р›Р¬РќРћ Р РђРЎРљР РћР™ РЎР›Р•Р”РЈР®Р©РР• РџРћР”РўР•РњР«:\n- "
+                        + "\n- ".join(issue.missing_topics)
+                    )
+
                 # Find the section index and get previous sections for context
-                section_idx = None
-                for i, sec in enumerate(updated):
-                    if (
-                        sec.chapter_number == issue.chapter_number
-                        and issue.section_title.lower() in sec.section_title.lower()
-                    ):
-                        section_idx = i
-                        break
+                section_idx = self._find_section_index(
+                    sections=updated,
+                    chapter_number=issue.chapter_number,
+                    section_title=issue.section_title,
+                )
 
                 # Rewrite the section
                 try:
-                    rewritten = await writer_stage._section_writer.write_section(
+                    rewritten = await writer_stage.rewrite_section(
                         paper_title=outline.title,
                         chapter=chapter,
                         section_title=issue.section_title,
                         sources=sources,
-                        previous_sections=updated[:section_idx] if section_idx else [],
+                        previous_sections=updated[:section_idx] if section_idx is not None else [],
                         target_words=target_words,
                         additional_instructions=rewrite_instructions,
                         model=config.writer_model,
@@ -793,7 +862,13 @@ class PipelineOrchestrator:
                     else:
                         # Section was missing entirely — append it
                         # Insert before conclusion (last section)
-                        updated.insert(len(updated) - 1, rewritten)
+                        insert_idx = self._get_missing_section_insert_index(
+                            sections=updated,
+                            outline=outline,
+                            chapter_number=issue.chapter_number,
+                            section_title=issue.section_title,
+                        )
+                        updated.insert(insert_idx, rewritten)
 
                     logger.info(
                         "compliance_section_rewritten",
@@ -809,6 +884,194 @@ class PipelineOrchestrator:
                     )
 
         return updated, compliance or ComplianceResult()
+
+    async def _enforce_final_invariants(
+        self,
+        *,
+        outline: Outline,
+        sections: list[SectionContent],
+        research: ResearchResult,
+        config: PipelineConfig,
+        callback: StageCallback,
+        writer_stage: WriterStage | ArticleWriterStage,
+        topic: str,
+        discipline: str,
+        page_count: int,
+        additional_instructions: str,
+        bibliography: BibliographyRegistry | None,
+        work_type: WorkType,
+        custom_outline: str | None,
+    ) -> tuple[list[SectionContent], ComplianceResult]:
+        """Final structural enforcement pass after all text mutations.
+
+        Runs compliance check when a custom outline was provided to ensure
+        downstream text processing (fact-check, coherence, humanizer) didn't
+        deviate from the plan.  Always logs structural warnings via
+        _ensure_expected_structure.
+        """
+        updated = list(sections)
+        compliance = ComplianceResult()
+
+        if custom_outline and config.enable_outline_compliance:
+            await callback.on_stage_start(
+                "writing", "Финальная проверка соответствия плану..."
+            )
+            updated, compliance = await self._check_outline_compliance(
+                outline=outline,
+                sections=updated,
+                research=research,
+                config=config,
+                callback=callback,
+                writer_stage=writer_stage,
+                topic=topic,
+                discipline=discipline,
+                page_count=page_count,
+                additional_instructions=additional_instructions,
+                bibliography=bibliography,
+            )
+            if not compliance.is_compliant:
+                logger.warning(
+                    "final_compliance_check_failed",
+                    issues_count=len(compliance.issues),
+                    issue_titles=[i.section_title for i in compliance.issues[:5]],
+                )
+
+        self._ensure_expected_structure(
+            outline=outline,
+            sections=updated,
+            work_type=work_type,
+            phase="final invariants",
+        )
+
+        return updated, compliance
+
+    def _ensure_expected_structure(
+        self,
+        *,
+        outline: Outline,
+        sections: list[SectionContent],
+        work_type: WorkType,
+        phase: str,
+    ) -> None:
+        """Validate that the section list maintains expected structural invariants.
+
+        Logs warnings on violations — does not raise, so intermediate pipeline
+        stages can continue. Hard failures are handled by _enforce_final_invariants.
+        """
+        if not sections:
+            logger.warning("structure_invariant_empty_sections", phase=phase)
+            return
+
+        chapter_numbers = {s.chapter_number for s in sections}
+
+        if work_type == WorkType.COURSEWORK:
+            if CHAPTER_INTRO not in chapter_numbers:
+                logger.warning(
+                    "structure_invariant_missing_intro",
+                    phase=phase,
+                    chapter_numbers=sorted(chapter_numbers),
+                )
+            if CHAPTER_CONCLUSION not in chapter_numbers:
+                logger.warning(
+                    "structure_invariant_missing_conclusion",
+                    phase=phase,
+                    chapter_numbers=sorted(chapter_numbers),
+                )
+
+        if outline:
+            expected_chapters = {ch.number for ch in outline.chapters}
+            body_chapters = chapter_numbers - {CHAPTER_INTRO, CHAPTER_CONCLUSION}
+            missing_chapters = expected_chapters - body_chapters
+            extra_chapters = body_chapters - expected_chapters
+            if missing_chapters:
+                logger.warning(
+                    "structure_invariant_missing_chapters",
+                    phase=phase,
+                    missing=sorted(missing_chapters),
+                )
+            if extra_chapters:
+                logger.warning(
+                    "structure_invariant_extra_chapters",
+                    phase=phase,
+                    extra=sorted(extra_chapters),
+                )
+
+    @staticmethod
+    def _build_section_briefs(outline: Outline) -> dict[tuple[int, str], SectionBrief]:
+        """Build section briefs for all body sections.  Delegates to WriterStage."""
+        return WriterStage._build_section_briefs(outline)
+
+    @staticmethod
+    def _resolve_section_brief(
+        briefs: dict[tuple[int, str], SectionBrief],
+        chapter: OutlineChapter,
+        section_title: str,
+    ) -> SectionBrief | None:
+        """Look up a section brief by chapter number and section title."""
+        # Exact match first
+        key = (chapter.number, section_title)
+        if key in briefs:
+            return briefs[key]
+        # Fuzzy match on normalised title
+        normalised = section_title.lower().strip()
+        for (ch_num, title), brief in briefs.items():
+            if ch_num == chapter.number and title.lower().strip() == normalised:
+                return brief
+        return None
+
+    @staticmethod
+    def _find_section_index(
+        sections: list[SectionContent],
+        chapter_number: int,
+        section_title: str,
+    ) -> int | None:
+        plan_title = section_title.lower().strip()
+        for idx, section in enumerate(sections):
+            if section.chapter_number != chapter_number:
+                continue
+            title = section.section_title.lower().strip()
+            if title == plan_title:
+                return idx
+
+        for idx, section in enumerate(sections):
+            if section.chapter_number != chapter_number:
+                continue
+            title = section.section_title.lower().strip()
+            if plan_title in title or title in plan_title:
+                return idx
+
+        return None
+
+    @staticmethod
+    def _get_missing_section_insert_index(
+        sections: list[SectionContent],
+        outline: Outline,
+        chapter_number: int,
+        section_title: str,
+    ) -> int:
+        section_order: list[tuple[int, str]] = []
+        for chapter in outline.chapters:
+            titles = chapter.subsections if chapter.subsections else [chapter.title]
+            for title in titles:
+                section_order.append((chapter.number, title))
+
+        try:
+            target_pos = section_order.index((chapter_number, section_title))
+        except ValueError:
+            target_pos = len(section_order)
+
+        body_seen = 0
+        for index, section in enumerate(sections):
+            if section.chapter_number in (CHAPTER_INTRO, CHAPTER_CONCLUSION):
+                continue
+            if body_seen >= target_pos:
+                return index
+            body_seen += 1
+
+        for index, section in enumerate(sections):
+            if section.chapter_number == CHAPTER_CONCLUSION:
+                return index
+        return len(sections)
 
     async def _validate_intro_conclusion(
         self,

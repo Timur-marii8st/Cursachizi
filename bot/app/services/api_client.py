@@ -4,6 +4,8 @@ ARCH-003: Uses a persistent httpx.AsyncClient to reuse TCP/TLS connections
 across requests instead of creating a new client per call.
 """
 
+import json
+
 import httpx
 import structlog
 
@@ -34,18 +36,47 @@ class CourseForgeAPIClient:
             return {}
         return {"X-API-Key": self._api_key}
 
+    @staticmethod
+    def _extract_error_detail(response: httpx.Response) -> str:
+        """Return a compact user-facing detail from a backend error response."""
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError):
+            return ""
+
+        detail = payload.get("detail")
+        return detail.strip() if isinstance(detail, str) else ""
+
     async def aclose(self) -> None:
         """Close the underlying httpx client."""
         await self._client.aclose()
 
     async def create_job(self, job: JobCreate) -> JobResponse:
         """Create a new generation job."""
-        response = await self._client.post(
-            "/api/jobs",
-            json=job.model_dump(),
-        )
-        response.raise_for_status()
-        return JobResponse(**response.json())
+        try:
+            response = await self._client.post(
+                "/api/jobs",
+                json=job.model_dump(),
+            )
+            response.raise_for_status()
+            return JobResponse(**response.json())
+        except httpx.HTTPStatusError as exc:
+            detail = self._extract_error_detail(exc.response)
+            logger.warning(
+                "create_job_http_error",
+                status_code=exc.response.status_code,
+                detail=detail or None,
+            )
+            if exc.response.status_code < 500 and detail:
+                raise RuntimeError(detail) from exc
+            raise RuntimeError(
+                "Сервис генерации временно недоступен. Попробуйте позже."
+            ) from exc
+        except httpx.HTTPError as exc:
+            logger.warning("create_job_transport_error", error=str(exc))
+            raise RuntimeError(
+                "Не удалось связаться с сервисом генерации. Попробуйте позже."
+            ) from exc
 
     async def get_job(self, job_id: str) -> JobResponse:
         """Get job status."""

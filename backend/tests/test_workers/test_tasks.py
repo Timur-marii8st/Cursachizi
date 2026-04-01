@@ -28,6 +28,82 @@ def _mock_client() -> MagicMock:
     return client
 
 
+class TestRunPipelineInputPropagation:
+    async def test_custom_outline_and_source_count_reach_orchestrator(self) -> None:
+        job_id = str(uuid4())
+        job = _make_mock_job(
+            id=job_id,
+            status=JobStatus.RUNNING,
+            pipeline_config={"custom_outline": "????? 1. ??????", "max_sources": 17},
+        )
+
+        startup_session = AsyncMock()
+        startup_session.get = AsyncMock(return_value=job)
+        startup_session.commit = AsyncMock()
+
+        completion_job = _make_mock_job(id=job_id, status=JobStatus.RUNNING)
+        completion_session = AsyncMock()
+        completion_session.get = AsyncMock(return_value=completion_job)
+        completion_session.commit = AsyncMock()
+
+        class _SessionContext:
+            def __init__(self, session):
+                self._session = session
+
+            async def __aenter__(self):
+                return self._session
+
+            async def __aexit__(self, *args):
+                pass
+
+        sessions = [startup_session, completion_session]
+        call_count = 0
+
+        def _session_factory():
+            nonlocal call_count
+            session = sessions[min(call_count, len(sessions) - 1)]
+            call_count += 1
+            return _SessionContext(session)
+
+        mock_result = MagicMock()
+        mock_result.document_bytes = None
+        mock_result.research = None
+        mock_result.outline = None
+        mock_result.fact_check = None
+
+        with (
+            patch("backend.app.workers.tasks.AsyncSessionLocal", side_effect=_session_factory),
+            patch("backend.app.workers.tasks.get_settings") as mock_settings,
+            patch("backend.app.workers.tasks.get_llm_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_search_provider", return_value=_mock_client()),
+            patch("backend.app.workers.tasks.get_vision_llm_provider", return_value=None),
+            patch("backend.app.workers.tasks.PipelineOrchestrator") as mock_orch_cls,
+        ):
+            settings = MagicMock()
+            settings.google_translate_api_key = ""
+            settings.deepl_api_key = ""
+            settings.visual_match_enabled = False
+            settings.max_search_results = 5
+            settings.max_sources_per_topic = 10
+            settings.max_tokens_per_section = 2000
+            settings.default_writer_model = "gemini"
+            settings.default_light_model = "gemini"
+            settings.pipeline_timeout_seconds = 120
+            mock_settings.return_value = settings
+
+            mock_orch = AsyncMock()
+            mock_orch.run = AsyncMock(return_value=mock_result)
+            mock_orch_cls.return_value = mock_orch
+
+            from backend.app.workers.tasks import run_pipeline
+            result = await run_pipeline({}, job_id)
+
+        assert "completed" in result.lower()
+        kwargs = mock_orch.run.await_args.kwargs
+        assert kwargs["custom_outline"] == "????? 1. ??????"
+        assert kwargs["config"].max_sources == 17
+
+
 class TestRunPipelineCancellationCheck:
     """BUG-002: worker must not overwrite CANCELLED status with COMPLETED."""
 

@@ -148,6 +148,8 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
     # Read user-selected source count from job, fallback to global setting
     user_max_sources = job_pipeline_config.get("max_sources", settings.max_sources_per_topic)
 
+    visual_match_enabled = settings.visual_match_enabled and bool(reference_s3_key)
+
     config = PipelineConfig(
         max_search_results=max(settings.max_search_results, user_max_sources * 2),
         max_sources=user_max_sources,
@@ -155,6 +157,7 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
         writer_model=settings.default_writer_model,
         light_model=settings.default_light_model,
         timeout_seconds=settings.pipeline_timeout_seconds,
+        enable_visual_match=visual_match_enabled,
     )
     timeout_seconds = config.timeout_seconds or settings.pipeline_timeout_seconds
 
@@ -175,15 +178,8 @@ async def run_pipeline(ctx: dict, job_id: str) -> str:
             from backend.app.pipeline.writer.humanizer import DeepLTranslateProvider
             translator = DeepLTranslateProvider(api_key=settings.deepl_api_key)
 
-        vision_llm = get_vision_llm_provider(settings)
-
-        # Resolve default GOST reference when no user reference was supplied.
-        # Done inside the loop so a fresh bytes object is available each attempt
-        # (the object itself is immutable; this is just a guard against None).
+        vision_llm = get_vision_llm_provider(settings) if visual_match_enabled else None
         _effective_reference = reference_docx_bytes
-        if _effective_reference is None and settings.visual_match_enabled and vision_llm:
-            from backend.app.pipeline.formatter.gost_reference import get_default_reference
-            _effective_reference = get_default_reference()
 
         orchestrator = PipelineOrchestrator(
             llm=llm, search=search, translator=translator,

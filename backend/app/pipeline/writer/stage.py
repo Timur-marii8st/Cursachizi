@@ -1,6 +1,7 @@
-"""Complete writer stage — generates all coursework content."""
+"""Complete writer stage for coursework generation."""
 
 import asyncio
+import re
 
 import structlog
 
@@ -10,8 +11,10 @@ from backend.app.pipeline.writer.section_writer import SectionWriter
 from shared.schemas.pipeline import (
     BibliographyRegistry,
     Outline,
+    OutlineChapter,
     PipelineConfig,
     ResearchResult,
+    SectionBrief,
     SectionContent,
 )
 
@@ -57,41 +60,20 @@ class WriterStage:
         progress_callback=None,
         bibliography: BibliographyRegistry | None = None,
     ) -> list[SectionContent]:
-        """Write all sections of the coursework.
-
-        Args:
-            topic: Coursework topic.
-            discipline: Academic discipline.
-            page_count: Target page count.
-            outline: Generated outline.
-            research: Research results with sources.
-            additional_instructions: Extra user instructions.
-            config: Pipeline configuration.
-            progress_callback: Optional async callback(sections_done, sections_total).
-            bibliography: Pre-built bibliography registry from orchestrator.
-
-        Returns:
-            List of all written sections in order.
-        """
+        """Write all sections of the coursework."""
         config = config or PipelineConfig()
         model = config.writer_model
         all_sections: list[SectionContent] = []
 
-        # Use provided registry or build from research sources
         if bibliography is None:
             bibliography = BibliographyRegistry.from_sources(research.sources)
-        logger.info(
-            "bibliography_registry_built",
-            entries=len(bibliography.entries),
-        )
+        logger.info("bibliography_registry_built", entries=len(bibliography.entries))
 
-        # Calculate total sections for progress tracking
-        total_sections = 2  # intro + conclusion
+        total_sections = 2
         for ch in outline.chapters:
             total_sections += max(len(ch.subsections), 1)
         sections_done = 0
 
-        # Step 1: Write introduction
         logger.info("writing_introduction")
         intro = await self._section_writer.write_introduction(
             topic=topic,
@@ -107,15 +89,11 @@ class WriterStage:
         if progress_callback:
             await progress_callback(sections_done, total_sections)
 
-        # Step 2: Write each chapter section-by-section
-        # Approximate words per section based on page count
-        body_pages = page_count - 4  # Minus intro/conclusion/title/toc
+        body_pages = page_count - 4
         total_subsections = sum(max(len(ch.subsections), 1) for ch in outline.chapters)
-        words_per_section = (body_pages * 250) // max(total_subsections, 1)  # ~250 words/page
+        words_per_section = (body_pages * 250) // max(total_subsections, 1)
 
-        # Distribute bibliography entries across body sections so each section
-        # cites DIFFERENT sources — this ensures broad source coverage (15-30).
-        body_section_titles: list[tuple] = []  # (chapter, section_title)
+        body_section_titles: list[tuple[OutlineChapter, str]] = []
         for ch in outline.chapters:
             for st in (ch.subsections if ch.subsections else [ch.title]):
                 body_section_titles.append((ch, st))
@@ -123,33 +101,30 @@ class WriterStage:
         source_assignments = self._assign_sources_to_sections(
             bibliography, len(body_section_titles)
         )
+        section_briefs = self._build_section_briefs(outline)
 
-        # Build the flat list of (chapter, section_title, required_nums) tasks
-        # in order so that asyncio.gather preserves document order.
-        write_tasks_meta: list[tuple] = []  # (chapter, section_title, required_nums)
+        write_tasks_meta: list[tuple[OutlineChapter, str, list[int], SectionBrief]] = []
         body_idx = 0
         for chapter in outline.chapters:
             logger.info("writing_chapter", chapter=chapter.number, title=chapter.title[:50])
             sections_to_write = chapter.subsections if chapter.subsections else [chapter.title]
             for section_title in sections_to_write:
-                required_nums = source_assignments[body_idx] if body_idx < len(source_assignments) else []
+                required_nums = (
+                    source_assignments[body_idx] if body_idx < len(source_assignments) else []
+                )
+                brief = section_briefs[(chapter.number, section_title)]
                 body_idx += 1
-                write_tasks_meta.append((chapter, section_title, required_nums))
+                write_tasks_meta.append((chapter, section_title, required_nums, brief))
 
-        # Snapshot of sections written so far (intro only) — used as coherence
-        # context for all parallel body sections.  Each section sees the same
-        # previous context; this is the correct trade-off when writing in
-        # parallel (full sequential context is impossible without serialising).
         previous_sections_snapshot = list(all_sections)
-
-        # Semaphore limits concurrent LLM calls to avoid provider rate limits.
         semaphore = asyncio.Semaphore(3)
         progress_lock = asyncio.Lock()
 
         async def write_one_section(
-            chapter,
+            chapter: OutlineChapter,
             section_title: str,
             required_nums: list[int],
+            brief: SectionBrief,
         ) -> SectionContent:
             async with semaphore:
                 return await self._section_writer.write_section(
@@ -163,15 +138,17 @@ class WriterStage:
                     model=model,
                     bibliography=bibliography,
                     required_source_nums=required_nums,
+                    section_brief=brief,
                 )
 
         async def write_one_with_progress(
-            chapter,
+            chapter: OutlineChapter,
             section_title: str,
             required_nums: list[int],
+            brief: SectionBrief,
         ) -> SectionContent:
             nonlocal sections_done
-            section = await write_one_section(chapter, section_title, required_nums)
+            section = await write_one_section(chapter, section_title, required_nums, brief)
             async with progress_lock:
                 sections_done += 1
                 done_snapshot = sections_done
@@ -180,25 +157,30 @@ class WriterStage:
             return section
 
         tasks = [
-            write_one_with_progress(ch, st, rn)
-            for ch, st, rn in write_tasks_meta
+            write_one_with_progress(ch, st, rn, brief)
+            for ch, st, rn, brief in write_tasks_meta
         ]
-        # gather preserves order; return_exceptions lets us handle partial failures
         body_results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        failures: list[str] = []
         for i, result in enumerate(body_results):
             if isinstance(result, Exception):
-                ch, st, _ = write_tasks_meta[i]
+                ch, st, _, _ = write_tasks_meta[i]
                 logger.error(
                     "section_write_failed",
                     chapter=ch.number,
                     section=st[:60],
                     error=str(result),
                 )
+                failures.append(f"{ch.number}:{st}")
             else:
                 all_sections.append(result)
 
-        # Step 3: Write conclusion
+        if failures:
+            raise RuntimeError(
+                "Failed to write required sections: " + ", ".join(failures)
+            )
+
         logger.info("writing_conclusion")
         conclusion = await self._section_writer.write_conclusion(
             topic=topic,
@@ -220,7 +202,6 @@ class WriterStage:
             total_sections=len(all_sections),
             total_words=total_words,
         )
-
         return all_sections
 
     @staticmethod
@@ -228,27 +209,19 @@ class WriterStage:
         bibliography: BibliographyRegistry | None,
         num_sections: int,
     ) -> list[list[int]]:
-        """Distribute bibliography entry numbers across body sections.
-
-        Each section gets a unique slice of sources so that, collectively, all
-        sections cover the entire registry. Sources are dealt round-robin and
-        each section receives at least 3 required sources.
-        """
+        """Distribute bibliography entry numbers across body sections."""
         if not bibliography or not bibliography.entries or num_sections == 0:
             return [[] for _ in range(num_sections)]
 
         all_nums = [e.number for e in bibliography.entries]
         assignments: list[list[int]] = [[] for _ in range(num_sections)]
 
-        # Round-robin deal: give each section its own slice
         for i, num in enumerate(all_nums):
             assignments[i % num_sections].append(num)
 
-        # Ensure each section has at least 3 sources (wrap around if needed)
         min_per_section = min(3, len(all_nums))
-        for _i, assigned in enumerate(assignments):
+        for assigned in assignments:
             while len(assigned) < min_per_section:
-                # Add sources from the pool that aren't already assigned
                 for num in all_nums:
                     if num not in assigned:
                         assigned.append(num)
@@ -262,5 +235,40 @@ class WriterStage:
             sections=num_sections,
             per_section=[len(a) for a in assignments],
         )
-
         return assignments
+
+    @staticmethod
+    def _build_section_briefs(outline: Outline) -> dict[tuple[int, str], SectionBrief]:
+        """Build a structured writing contract for each body section."""
+        briefs: dict[tuple[int, str], SectionBrief] = {}
+        for chapter in outline.chapters:
+            section_titles = chapter.subsections if chapter.subsections else [chapter.title]
+            clean_titles = [WriterStage._clean_heading(title) for title in section_titles]
+            total = len(section_titles)
+            for index, section_title in enumerate(section_titles, start=1):
+                clean_section = WriterStage._clean_heading(section_title)
+                expected_topics = [clean_section]
+                if chapter.title.strip() and chapter.title.strip() != clean_section:
+                    expected_topics.append(chapter.title.strip())
+                chapter_description = chapter.description.strip()
+                section_summary = (
+                    chapter_description
+                    or f"Focus on the section topic '{clean_section}' within chapter '{chapter.title}'."
+                )
+                excluded_topics = [title for title in clean_titles if title != clean_section]
+                briefs[(chapter.number, section_title)] = SectionBrief(
+                    chapter_number=chapter.number,
+                    chapter_title=chapter.title,
+                    section_title=section_title,
+                    chapter_description=chapter_description,
+                    section_summary=section_summary,
+                    expected_topics=expected_topics,
+                    excluded_topics=excluded_topics,
+                    section_position=index,
+                    total_sections_in_chapter=total,
+                )
+        return briefs
+
+    @staticmethod
+    def _clean_heading(text: str) -> str:
+        return re.sub(r"^\d+(?:\.\d+)*\.?\s*", "", text).strip()

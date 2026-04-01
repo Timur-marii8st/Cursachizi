@@ -132,8 +132,8 @@ class OutlineComplianceChecker:
         model: str | None = None,
     ) -> ComplianceIssue | None:
         """Check a single section against its outline entry using LLM."""
-        # Truncate to save tokens
-        section_text = section.content[:1500]
+        # Check more than the first paragraph to reduce false negatives.
+        section_text = section.content[:2500]
 
         prompt = _COMPLIANCE_CHECK_PROMPT.format(
             chapter_number=chapter_number,
@@ -166,6 +166,7 @@ class OutlineComplianceChecker:
                 issue_type=data.get("issue_type", "off_topic"),
                 description=data.get("description", "Содержание не соответствует плану"),
                 suggestion=data.get("suggestion", ""),
+                missing_topics=data.get("missing_topics", []),
             )
 
         except (json.JSONDecodeError, KeyError, TypeError) as e:
@@ -174,7 +175,13 @@ class OutlineComplianceChecker:
                 section=section_title[:50],
                 error=str(e),
             )
-            return None
+            return ComplianceIssue(
+                section_title=section_title,
+                chapter_number=chapter_number,
+                issue_type="validation_error",
+                description="РќРµ СѓРґР°Р»РѕСЃСЊ РЅР°РґС‘Р¶РЅРѕ РїСЂРѕРІРµСЂРёС‚СЊ СЃРѕРѕС‚РІРµС‚СЃС‚РІРёРµ СЂР°Р·РґРµР»Р° РїР»Р°РЅСѓ.",
+                suggestion="РџРµСЂРµРїРёСЃР°С‚СЊ Рё РїРѕРІС‚РѕСЂРЅРѕ РїСЂРѕРІРµСЂРёС‚СЊ СЂР°Р·РґРµР» РїРѕ СѓС‚РѕС‡РЅС‘РЅРЅРѕРјСѓ РїР»Р°РЅСѓ.",
+            )
 
     @staticmethod
     def _find_section(

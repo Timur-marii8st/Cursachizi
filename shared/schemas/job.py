@@ -26,6 +26,7 @@ class JobStage(StrEnum):
     WRITING = "writing"
     FACT_CHECKING = "fact_checking"
     FORMATTING = "formatting"
+    VISUAL_MATCHING = "visual_matching"
     FINALIZING = "finalizing"
 
 

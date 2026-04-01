@@ -9,6 +9,7 @@ from shared.schemas.pipeline import (
     BibliographyRegistry,
     Outline,
     OutlineChapter,
+    SectionBrief,
     SectionContent,
     Source,
 )
@@ -19,6 +20,12 @@ ARTICLE_SECTION_PROMPT = """Ты — опытный автор научных с
 
 НАЗВАНИЕ СТАТЬИ: {paper_title}
 РАЗДЕЛ {section_number}: {section_title}
+
+SECTION CONTRACT:
+{section_contract}
+
+КОНТРАКТ РАЗДЕЛА:
+{section_contract}
 
 КОНТЕКСТ ПРЕДЫДУЩИХ РАЗДЕЛОВ:
 {previous_context}
@@ -233,12 +240,14 @@ class ArticleSectionWriter:
         additional_instructions: str = "",
         model: str | None = None,
         bibliography: BibliographyRegistry | None = None,
+        section_brief: SectionBrief | None = None,
     ) -> SectionContent:
         """Write a single article section."""
         previous_context = self._format_previous(previous_sections[-2:])
+        section_brief = section_brief or self._build_fallback_brief(chapter)
         has_sources = (bibliography and bibliography.entries) or sources
         if bibliography and bibliography.entries:
-            sources_text = bibliography.format_with_content(sources)
+            sources_text = bibliography.get_formatted_content_cached(sources)
         elif sources:
             sources_text = self._format_sources(sources)
         else:
@@ -259,10 +268,13 @@ class ArticleSectionWriter:
         else:
             effective_instructions = additional_instructions or "Нет дополнительных инструкций."
 
+        section_contract = self._format_section_brief(section_brief)
+
         prompt = ARTICLE_SECTION_PROMPT.format(
             paper_title=_safe(paper_title),
             section_number=chapter.number,
             section_title=_safe(chapter.title),
+            section_contract=section_contract,
             previous_context=previous_context,
             sources_text=sources_text,
             target_words=target_words,
@@ -374,6 +386,37 @@ class ArticleSectionWriter:
             text = source.full_text[:1500] if source.full_text else source.snippet
             lines.append(f"[{i}] {source.title}\n{text}\n")
         return "\n".join(lines) if lines else "Источники не предоставлены."
+
+    @staticmethod
+    def _build_fallback_brief(chapter: OutlineChapter) -> SectionBrief:
+        section_summary = chapter.description.strip() or (
+            f"Focus on the section topic '{chapter.title}' and keep the analysis on scope."
+        )
+        return SectionBrief(
+            chapter_number=chapter.number,
+            chapter_title=chapter.title,
+            section_title=chapter.title,
+            chapter_description=chapter.description.strip(),
+            section_summary=section_summary,
+            expected_topics=[chapter.title],
+            excluded_topics=[],
+            section_position=1,
+            total_sections_in_chapter=1,
+        )
+
+    @staticmethod
+    def _format_section_brief(section_brief: SectionBrief) -> str:
+        lines = [
+            f"- Section goal: {section_brief.section_summary}",
+            (
+                "- Expected topics: " + ", ".join(section_brief.expected_topics)
+                if section_brief.expected_topics
+                else "- Expected topics: not specified"
+            ),
+        ]
+        if section_brief.excluded_topics:
+            lines.append("- Avoid drifting into: " + ", ".join(section_brief.excluded_topics))
+        return "\n".join(lines)
 
     @staticmethod
     def _format_sections_summary(

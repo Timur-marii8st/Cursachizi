@@ -163,14 +163,14 @@ class TestOutlineComplianceChecker:
         assert result.sections_checked == 4
         assert result.sections_compliant == 3
 
-    async def test_llm_parse_error_treated_as_compliant(
+    async def test_llm_parse_error_becomes_validation_issue(
         self,
         checker: OutlineComplianceChecker,
         mock_llm: MockLLMProvider,
         sample_outline: Outline,
         matching_sections: list[SectionContent],
     ) -> None:
-        """If LLM returns invalid JSON, treat as compliant (no false positives)."""
+        """If LLM returns invalid JSON, surface a validation issue instead of a silent pass."""
         compliant = json.dumps({
             "is_compliant": True,
             "issue_type": "none",
@@ -182,8 +182,9 @@ class TestOutlineComplianceChecker:
 
         result = await checker.check(sample_outline, matching_sections)
 
-        assert result.is_compliant  # parse error -> no issue created
+        assert not result.is_compliant
         assert result.sections_checked == 4
+        assert result.issues[0].issue_type == "validation_error"
 
     async def test_fuzzy_matching_by_partial_title(
         self,

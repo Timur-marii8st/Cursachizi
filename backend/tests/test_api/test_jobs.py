@@ -147,6 +147,24 @@ class TestCreateJob:
         )
         assert response.status_code == 201
 
+    async def test_create_job_persists_pipeline_config(self, client: AsyncClient, mock_db) -> None:
+        custom_outline = "Chapter 1. Theory\n1.1. Basics"
+        response = await client.post(
+            "/api/jobs",
+            json={
+                "topic": "Topic for pipeline config persistence check",
+                "source_count": 12,
+                "custom_outline": custom_outline,
+            },
+        )
+        assert response.status_code == 201
+
+        created_job = mock_db.add.call_args.args[0]
+        assert created_job.pipeline_config == {
+            "max_sources": 12,
+            "custom_outline": custom_outline,
+        }
+
     async def test_create_job_topic_too_short(self, client: AsyncClient) -> None:
         response = await client.post(
             "/api/jobs",
@@ -193,6 +211,20 @@ class TestGetJob:
         assert data["progress"]["stage"] == "writing"
         assert data["progress"]["progress_pct"] == 45
 
+
+    async def test_get_visual_matching_job_has_progress(
+        self, client: AsyncClient, sample_job
+    ) -> None:
+        sample_job.status = JobStatus.RUNNING
+        sample_job.stage = JobStage.VISUAL_MATCHING
+        sample_job.progress_pct = 80
+        sample_job.stage_message = "??????? ?????? ? ????????"
+
+        response = await client.get(f"/api/jobs/{sample_job.id}")
+        data = response.json()
+        assert data["status"] == "running"
+        assert data["progress"]["stage"] == "visual_matching"
+        assert data["progress"]["progress_pct"] == 80
 
 class TestListJobs:
     async def test_list_jobs(self, client: AsyncClient) -> None:

@@ -9,6 +9,7 @@ from backend.app.llm.provider import LLMMessage, LLMProvider
 from shared.schemas.pipeline import (
     BibliographyRegistry,
     OutlineChapter,
+    SectionBrief,
     SectionContent,
     SectionEvaluation,
     Source,
@@ -19,6 +20,9 @@ logger = structlog.get_logger()
 REWRITE_PROMPT = """Ты — опытный автор научных работ на русском языке. Перепиши раздел курсовой работы, устранив указанные недостатки.
 
 РАЗДЕЛ: {section_title} (Глава {chapter_number})
+
+КОНТРАКТ РАЗДЕЛА:
+{section_brief}
 
 ТЕКУЩИЙ ТЕКСТ:
 {current_text}
@@ -117,6 +121,7 @@ class SectionEvaluator:
         target_words: int,
         model: str | None = None,
         bibliography: BibliographyRegistry | None = None,
+        section_brief: SectionBrief | None = None,
     ) -> SectionContent:
         """Rewrite a section based on evaluation feedback."""
         if bibliography:
@@ -127,6 +132,7 @@ class SectionEvaluator:
         prompt = REWRITE_PROMPT.format(
             section_title=section.section_title,
             chapter_number=chapter.number,
+            section_brief=self._format_section_brief(section_brief),
             current_text=section.content,
             feedback=evaluation.feedback,
             sources_text=sources_text,
@@ -190,3 +196,26 @@ class SectionEvaluator:
             text = source.full_text[:1000] if source.full_text else source.snippet
             lines.append(f"[{i}] {source.title}\n{text}")
         return "\n\n".join(lines) if lines else "Источники не предоставлены."
+
+    @staticmethod
+    def _format_section_brief(section_brief: SectionBrief | None) -> str:
+        if section_brief is None:
+            return "Используй исходное название раздела и не уходи от основной темы."
+
+        lines = [
+            f"Глава: {section_brief.chapter_title}",
+            f"Раздел: {section_brief.section_title}",
+        ]
+        if section_brief.chapter_description:
+            lines.append(f"Описание главы: {section_brief.chapter_description}")
+        if section_brief.section_summary:
+            lines.append(f"Фокус раздела: {section_brief.section_summary}")
+        if section_brief.expected_topics:
+            lines.append(
+                "Обязательно раскрыть: " + "; ".join(section_brief.expected_topics)
+            )
+        if section_brief.excluded_topics:
+            lines.append(
+                "Не смещаться в: " + "; ".join(section_brief.excluded_topics)
+            )
+        return "\n".join(lines)

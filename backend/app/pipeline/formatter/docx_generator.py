@@ -105,10 +105,14 @@ class DocxGenerator:
         self._add_toc_placeholder(doc)
 
         # Introduction
-        intro_sections = [s for s in sections if s.section_title == "Введение"]
-        if intro_sections:
+        intro_section = self._find_special_section(
+            sections,
+            chapter_number=0,
+            fallback_title="Введение",
+        )
+        if intro_section:
             self._add_heading(doc, "ВВЕДЕНИЕ", level=1, numbered=False)
-            intro_text = self._strip_leading_heading(intro_sections[0].content, "ВВЕДЕНИЕ")
+            intro_text = self._strip_leading_heading(intro_section.content, "ВВЕДЕНИЕ")
             self._add_body_text(doc, intro_text, work_type)
             doc.add_page_break()
 
@@ -135,11 +139,15 @@ class DocxGenerator:
             doc.add_page_break()
 
         # Conclusion
-        conclusion_sections = [s for s in sections if s.section_title == "Заключение"]
-        if conclusion_sections:
+        conclusion_section = self._find_special_section(
+            sections,
+            chapter_number=99,
+            fallback_title="Заключение",
+        )
+        if conclusion_section:
             self._add_heading(doc, "ЗАКЛЮЧЕНИЕ", level=1, numbered=False)
             concl_text = self._strip_leading_heading(
-                conclusion_sections[0].content, "ЗАКЛЮЧЕНИЕ"
+                conclusion_section.content, "ЗАКЛЮЧЕНИЕ"
             )
             self._add_body_text(doc, concl_text, work_type)
             doc.add_page_break()
@@ -254,6 +262,23 @@ class DocxGenerator:
         run.font.color.rgb = RGBColor(128, 128, 128)
 
         doc.add_page_break()
+
+    @staticmethod
+    def _find_special_section(
+        sections: list[SectionContent],
+        *,
+        chapter_number: int,
+        fallback_title: str,
+    ) -> SectionContent | None:
+        for section in sections:
+            if section.chapter_number == chapter_number:
+                return section
+
+        normalized_target = fallback_title.strip().lower()
+        for section in sections:
+            if section.section_title.strip().lower() == normalized_target:
+                return section
+        return None
 
     def _add_heading(
         self,

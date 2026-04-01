@@ -11,6 +11,7 @@ from shared.schemas.pipeline import (
     BibliographyRegistry,
     Outline,
     OutlineChapter,
+    SectionBrief,
     SectionContent,
     Source,
 )
@@ -32,6 +33,9 @@ SECTION_PROMPT = """Ты — опытный автор научных работ
 НАЗВАНИЕ КУРСОВОЙ: {paper_title}
 ГЛАВА {chapter_number}: {chapter_title}
 ТЕКУЩИЙ РАЗДЕЛ: {section_title}
+
+КОНТРАКТ РАЗДЕЛА:
+{section_contract}
 
 КОНТЕКСТ ПРЕДЫДУЩИХ РАЗДЕЛОВ:
 {previous_context}
@@ -190,14 +194,16 @@ class SectionWriter:
         model: str | None = None,
         bibliography: BibliographyRegistry | None = None,
         required_source_nums: list[int] | None = None,
+        section_brief: SectionBrief | None = None,
     ) -> SectionContent:
         """Write a single chapter section."""
         # Build context from previous sections (last 2 for continuity)
         previous_context = self._format_previous(previous_sections[-2:])
+        section_brief = section_brief or self._build_fallback_brief(chapter, section_title)
         # Use bibliography registry if available, otherwise fall back to raw sources
         has_sources = (bibliography and bibliography.entries) or sources
         if bibliography and bibliography.entries:
-            sources_text = bibliography.format_with_content(sources)
+            sources_text = bibliography.get_formatted_content_cached(sources)
         elif sources:
             sources_text = self._format_sources(sources)
         else:
@@ -231,11 +237,14 @@ class SectionWriter:
         else:
             required_sources_text = "Используй как можно больше разных источников из реестра."
 
+        section_contract = self._format_section_brief(section_brief)
+
         prompt = SECTION_PROMPT.format(
             paper_title=_safe(paper_title),
             chapter_number=chapter.number,
             chapter_title=_safe(chapter.title),
             section_title=_safe(section_title),
+            section_contract=section_contract,
             previous_context=previous_context,
             sources_text=sources_text,
             required_sources=required_sources_text,
@@ -351,6 +360,61 @@ class SectionWriter:
             text = source.full_text[:1500] if source.full_text else source.snippet
             lines.append(f"[{i}] {source.title}\n{text}\n")
         return "\n".join(lines) if lines else "Источники не предоставлены."
+
+    @staticmethod
+    def _build_fallback_brief(
+        chapter: OutlineChapter,
+        section_title: str,
+    ) -> SectionBrief:
+        clean_section = re.sub(r"^\d+(?:\.\d+)*\.?\s*", "", section_title).strip()
+        expected_topics = [clean_section]
+        if chapter.title.strip() and chapter.title.strip() != clean_section:
+            expected_topics.append(chapter.title.strip())
+        chapter_description = chapter.description.strip()
+        section_summary = (
+            chapter_description
+            or f"Focus on the section topic '{clean_section}' within chapter '{chapter.title}'."
+        )
+        excluded_topics = [
+            re.sub(r"^\d+(?:\.\d+)*\.?\s*", "", item).strip()
+            for item in chapter.subsections
+            if item != section_title
+        ]
+        return SectionBrief(
+            chapter_number=chapter.number,
+            chapter_title=chapter.title,
+            section_title=section_title,
+            chapter_description=chapter_description,
+            section_summary=section_summary,
+            expected_topics=expected_topics,
+            excluded_topics=[item for item in excluded_topics if item],
+            section_position=1,
+            total_sections_in_chapter=max(len(chapter.subsections), 1),
+        )
+
+    @staticmethod
+    def _format_section_brief(section_brief: SectionBrief) -> str:
+        lines = [
+            f"- Chapter focus: {section_brief.chapter_title}",
+            f"- Section goal: {section_brief.section_summary}",
+            (
+                "- Expected topics: " + ", ".join(section_brief.expected_topics)
+                if section_brief.expected_topics
+                else "- Expected topics: not specified"
+            ),
+            (
+                "- Avoid drifting into: " + ", ".join(section_brief.excluded_topics)
+                if section_brief.excluded_topics
+                else "- Avoid drifting into adjacent subsection topics"
+            ),
+            (
+                f"- Position in chapter: "
+                f"{section_brief.section_position}/{section_brief.total_sections_in_chapter}"
+            ),
+        ]
+        if section_brief.chapter_description:
+            lines.insert(1, f"- Chapter intent: {section_brief.chapter_description}")
+        return "\n".join(lines)
 
     @staticmethod
     def _format_chapters_summary(

@@ -38,6 +38,14 @@ router = APIRouter(
 )
 
 
+def _coerce_job_stage(stage: str) -> JobStage:
+    """Convert persisted stage strings into the public enum without breaking polling."""
+    try:
+        return JobStage(stage)
+    except ValueError:
+        return JobStage.FINALIZING
+
+
 def get_arq_pool(request: Request) -> ArqRedis:
     """Get shared arq Redis pool from app state."""
     arq_pool = getattr(request.app.state, "arq_pool", None)
@@ -54,7 +62,7 @@ def _job_to_response(job: Job) -> JobResponse:
     progress = None
     if job.status == JobStatus.RUNNING:
         progress = JobProgress(
-            stage=JobStage(job.stage),
+            stage=_coerce_job_stage(job.stage),
             progress_pct=job.progress_pct,
             message=job.stage_message,
         )
@@ -144,11 +152,10 @@ async def create_job(
         pipeline_cfg["custom_outline"] = job_in.custom_outline
     job.pipeline_config = pipeline_cfg
 
-    await db.refresh(job)
-
     # Commit before enqueuing to avoid race condition: arq worker must see the
     # committed Job row when it reads from a separate DB connection.
     await db.commit()
+    await db.refresh(job)
 
     await arq_pool.enqueue_job("run_pipeline", job.id)
 
@@ -311,6 +318,7 @@ async def upload_reference_template(
     job.reference_s3_key = ref_key
     job.updated_at = datetime.now(UTC)
     await db.flush()
+    await db.commit()
     await db.refresh(job)
 
     return _job_to_response(job)

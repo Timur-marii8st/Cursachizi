@@ -64,6 +64,20 @@ class Outline(BaseModel):
     abstract_points: list[str] = Field(default_factory=list)
 
 
+class SectionBrief(BaseModel):
+    """Structured writing contract for a single body section."""
+
+    chapter_number: int
+    chapter_title: str
+    section_title: str
+    chapter_description: str = ""
+    section_summary: str = ""
+    expected_topics: list[str] = Field(default_factory=list)
+    excluded_topics: list[str] = Field(default_factory=list)
+    section_position: int = 1
+    total_sections_in_chapter: int = 1
+
+
 class BibliographyEntry(BaseModel):
     """A single entry in the unified bibliography registry.
 
@@ -232,6 +246,38 @@ class BibliographyRegistry(BaseModel):
         """Get entry by its global number in O(1) via a cached index."""
         return self._entry_index.get(number)
 
+    def add_source(self, source: "Source") -> "BibliographyEntry | None":
+        """Add a source to the registry unless it already exists."""
+        normalized_url = self._normalize_url(source.url) if source.url else ""
+        normalized_title = source.title.strip().lower()
+
+        for entry in self.entries:
+            same_url = normalized_url and self._normalize_url(entry.url) == normalized_url
+            same_title = entry.title.strip().lower() == normalized_title
+            if same_url or same_title:
+                return entry
+
+        today = date.today().strftime("%d.%m.%Y")
+        if source.url:
+            ref = (
+                f"{source.title} [Электронный ресурс]. "
+                f"— URL: {source.url} (дата обращения: {today})"
+            )
+        else:
+            ref = f"{source.title}."
+
+        entry = BibliographyEntry(
+            number=len(self.entries) + 1,
+            title=source.title,
+            url=source.url,
+            formatted_reference=ref,
+        )
+        self.entries.append(entry)
+        self._entry_index_len = 0
+        self._format_cache_key = (-1, -1)
+        self._format_cache = ""
+        return entry
+
     def validate_citations(self, text: str) -> list[int]:
         """Find citation numbers in text that don't exist in the registry."""
         import re
@@ -329,6 +375,7 @@ class ComplianceIssue(BaseModel):
     issue_type: str  # "off_topic" | "missing_content" | "insufficient_sources"
     description: str
     suggestion: str = ""
+    missing_topics: list[str] = Field(default_factory=list)
 
 
 class ComplianceResult(BaseModel):

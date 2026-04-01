@@ -130,10 +130,15 @@ def _build_chapter(data: dict, page_count: int, chapter_index: int) -> OutlineCh
     body_pages = page_count - 4  # minus intro/conclusion/title/toc
     estimated = max(body_pages // total_chapters, 3)
 
+    subsection_titles = [re.sub(r"^\d+(?:\.\d+)*\.?\s*", "", item).strip() for item in data["subsections"]]
+    description = ""
+    if subsection_titles:
+        description = "Cover the subsection topics in order: " + ", ".join(subsection_titles)
+
     return OutlineChapter(
         number=data["number"],
         title=data["title"],
         subsections=data["subsections"],
-        description="",
+        description=description,
         estimated_pages=estimated,
     )
